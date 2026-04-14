@@ -1,0 +1,254 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mongodb"
+  url      = env("DATABASE_URL")
+}
+
+model Organization {
+  id             String            @id @default(uuid()) @map("_id")
+  name           String
+  slug           String            @unique
+  createdAt      DateTime          @default(now())
+  updatedAt      DateTime          @updatedAt
+  users          User[]
+  agents         Agent[]
+  campaigns      Campaign[]
+  batches        Batch[]
+  calls          Call[]
+  numbers        PhoneNumber[]
+  telephony      TelephonyConfig[]
+  voices         Voice[]
+  aiCredentials  AiCredential[]
+}
+
+model AiCredential {
+  id                   String       @id @default(uuid()) @map("_id")
+  organizationId       String
+  organization         Organization @relation(fields: [organizationId], references: [id])
+  provider             String       // "openai" | "cartesia" | "elevenlabs" | "deepgram" | "gemini"
+  name                 String       // freeform label like "Production Key", "Client A"
+  credentialsEncrypted String       // encrypted JSON blob: { apiKey, defaultModel, defaultVoiceId, sttModel, ttsModel, defaultVoice }
+  isDefault            Boolean      @default(false)
+  createdAt            DateTime     @default(now())
+  updatedAt            DateTime     @updatedAt
+}
+
+model User {
+  id             String       @id @default(uuid()) @map("_id")
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  name           String
+  email          String       @unique
+  passwordHash   String
+  role           String       @default("admin")
+  isActive       Boolean      @default(true)
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+}
+
+model TelephonyConfig {
+  id                   String       @id @default(uuid()) @map("_id")
+  organizationId       String
+  organization         Organization @relation(fields: [organizationId], references: [id])
+  provider             String
+  displayName          String
+  isDefault            Boolean      @default(false)
+  status               String       @default("configured")
+  credentialsEncrypted String
+  defaultFromNumber    String?
+  createdAt            DateTime     @default(now())
+  updatedAt            DateTime     @updatedAt
+}
+
+model PhoneNumber {
+  id                String       @id @default(uuid()) @map("_id")
+  organizationId    String
+  organization      Organization @relation(fields: [organizationId], references: [id])
+  provider          String
+  providerNumberId  String?
+  phoneNumber       String
+  label             String
+  capabilities      Json?
+  isActive          Boolean      @default(true)
+  isDefaultOutbound Boolean      @default(false)
+  assignedAgentId   String?
+  createdAt         DateTime     @default(now())
+  updatedAt         DateTime     @updatedAt
+}
+
+model Agent {
+  id                         String       @id @default(uuid()) @map("_id")
+  organizationId             String
+  organization               Organization @relation(fields: [organizationId], references: [id])
+  name                       String
+  slug                       String
+  status                     String       @default("draft")
+  conversationEngine         String       @default("pipeline")
+  geminiModel                String       @default("gemini-2.0-flash-live-001")
+  geminiVoice                String       @default("Kore")
+  welcomeMessage             String
+  systemPrompt               String
+  finalMessage               String?
+  llmProvider                String       @default("openai")
+  llmModel                   String       @default("gpt-4o-mini")
+  llmTemperature             Float        @default(0.2)
+  llmMaxTokens               Int          @default(450)
+  llmCredentialId            String?      // FK → AiCredential (optional, falls back to env)
+  language                   String       @default("English")
+  sttProvider                String       @default("cartesia")
+  sttModel                   String       @default("ink-whisper")
+  sttCredentialId            String?      // FK → AiCredential
+  keywords                   String?
+  ttsProvider                String       @default("cartesia")
+  ttsModel                   String       @default("sonic-2")
+  ttsVoiceId                 String?
+  ttsCredentialId            String?      // FK → AiCredential
+  geminiCredentialId         String?      // FK → AiCredential (for gemini-live engine)
+  ttsBufferSize              Int          @default(200)
+  ttsSpeedRate               Float        @default(1)
+  ttsSimilarityBoost         Float        @default(0.75)
+  ttsStability               Float        @default(0.5)
+  ttsStyleExaggeration       Float        @default(0)
+  preciseTranscript          Boolean      @default(false)
+  interruptAfterWords        Int          @default(2)
+  responseRate               String       @default("Balanced")
+  telephonyProvider          String       @default("plivo")
+  endpointingMs              Int          @default(100)
+  linearDelayMs              Int          @default(200)
+  userOnlineDetection        Boolean      @default(false)
+  userOnlinePrompt           String?
+  invokeAfterSeconds         Int          @default(9)
+  ambientNoise               String       @default("None")
+  noiseCancellation          Boolean      @default(false)
+  voicemailDetection         Boolean      @default(false)
+  dtmfEnabled                Boolean      @default(false)
+  autoReschedule             Boolean      @default(false)
+  hangupOnSilence            Boolean      @default(true)
+  hangupOnSilenceSeconds     Int          @default(20)
+  callTimeoutSeconds         Int          @default(600)
+  summarizationEnabled       Boolean      @default(false)
+  extractionEnabled          Boolean      @default(false)
+  extractionPrompt           String?
+  analyticsWebhookUrl        String?
+  inboundNumberId            String?
+  createdAt                  DateTime     @default(now())
+  updatedAt                  DateTime     @updatedAt
+  campaigns                  Campaign[]
+  calls                      Call[]
+}
+
+model Campaign {
+  id                String       @id @default(uuid()) @map("_id")
+  organizationId    String
+  organization      Organization @relation(fields: [organizationId], references: [id])
+  agentId           String
+  agent             Agent        @relation(fields: [agentId], references: [id])
+  name              String
+  status            String       @default("draft")
+  telephonyProvider String
+  fromNumber        String
+  maxRetries        Int          @default(3)
+  retryDelayMinutes Int          @default(30)
+  callWindowStart   String       @default("09:00")
+  callWindowEnd     String       @default("21:00")
+  timezone          String       @default("Asia/Kolkata")
+  totalStudents     Int          @default(0)
+  createdAt         DateTime     @default(now())
+  updatedAt         DateTime     @updatedAt
+  students          Student[]
+  calls             Call[]
+}
+
+model Student {
+  id           String    @id @default(uuid()) @map("_id")
+  campaignId   String
+  campaign     Campaign  @relation(fields: [campaignId], references: [id])
+  name         String
+  phone        String
+  email        String?
+  metadataJson Json?
+  latestStatus String    @default("pending")
+  retryCount   Int       @default(0)
+  lastCalledAt DateTime?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+  calls        Call[]
+}
+
+model Batch {
+  id                String       @id @default(uuid()) @map("_id")
+  organizationId    String
+  organization      Organization @relation(fields: [organizationId], references: [id])
+  agentId           String
+  name              String
+  status            String       @default("draft")
+  telephonyProvider String
+  fromNumber        String
+  totalItems        Int          @default(0)
+  processedItems    Int          @default(0)
+  successCount      Int          @default(0)
+  failedCount       Int          @default(0)
+  createdAt         DateTime     @default(now())
+  updatedAt         DateTime     @updatedAt
+}
+
+model Call {
+  id                String       @id @default(uuid()) @map("_id")
+  organizationId    String
+  organization      Organization @relation(fields: [organizationId], references: [id])
+  campaignId        String?
+  campaign          Campaign?    @relation(fields: [campaignId], references: [id])
+  studentId         String?
+  student           Student?     @relation(fields: [studentId], references: [id])
+  agentId           String?
+  agent             Agent?       @relation(fields: [agentId], references: [id])
+  telephonyProvider String
+  providerCallId    String?
+  providerSessionId String?
+  status            String
+  subStatus         String?
+  startedAt         DateTime     @default(now())
+  answeredAt        DateTime?
+  endedAt           DateTime?
+  durationSeconds   Int?
+  costEstimate      Float?
+  recordingUrl      String?
+  transcriptText    String?
+  summaryText       String?
+  extractedDataJson Json?
+  errorCode         String?
+  errorMessage      String?
+  createdAt         DateTime     @default(now())
+  updatedAt         DateTime     @updatedAt
+  turns             CallTurn[]
+}
+
+model CallTurn {
+  id            String   @id @default(uuid()) @map("_id")
+  callId        String
+  call          Call     @relation(fields: [callId], references: [id])
+  speaker       String
+  sequence      Int
+  text          String
+  startOffsetMs Int?
+  endOffsetMs   Int?
+  createdAt     DateTime @default(now())
+}
+
+model Voice {
+  id             String       @id @default(uuid()) @map("_id")
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  name           String
+  provider       String       @default("cartesia")
+  voiceId        String
+  language       String       @default("en")
+  gender         String?
+  description    String?
+  isDefault      Boolean      @default(false)
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+}

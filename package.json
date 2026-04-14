@@ -1,0 +1,20 @@
+{
+  "name": "voice-screening-platform",
+  "private": true,
+  "version": "0.1.0",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "concurrently \"npm run dev --workspace @screening/web\" \"npm run dev --workspace @screening/server\"",
+    "dev:web": "npm run dev --workspace @screening/web",
+    "dev:server": "npm run dev --workspace @screening/server",
+    "build": "npm run build --workspaces",
+    "lint": "npm run lint --workspaces",
+    "typecheck": "npm run typecheck --workspaces"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.2"
+  }
+}

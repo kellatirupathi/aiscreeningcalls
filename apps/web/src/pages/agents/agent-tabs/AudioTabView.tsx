@@ -1,0 +1,307 @@
+import { Input } from "@/components/ui/Input";
+import { Select } from "@/components/ui/Select";
+import { Slider } from "@/components/ui/Slider";
+import { SectionCard } from "@/components/agent-builder/SectionCard";
+import { useVoices } from "@/hooks/useVoices";
+import { useAiCredentials, type AiProvider } from "@/hooks/useAiCredentials";
+import type { AgentRecord } from "@/types";
+
+interface AudioTabViewProps {
+  agent: AgentRecord;
+  onAgentChange: (changes: Partial<AgentRecord>) => void;
+}
+
+const languages = ["English", "Hindi"];
+
+const sttProviders = ["cartesia", "deepgram"];
+const sttProviderLabels: Record<string, string> = { cartesia: "Cartesia", deepgram: "Deepgram" };
+const sttModelsByProvider: Record<string, string[]> = {
+  cartesia: ["ink-whisper"],
+  deepgram: ["nova-3", "nova-2"]
+};
+
+const ttsProviders = ["cartesia", "elevenlabs"];
+const ttsProviderLabels: Record<string, string> = { cartesia: "Cartesia", elevenlabs: "Elevenlabs" };
+const ttsModelsByProvider: Record<string, string[]> = {
+  cartesia: ["sonic-2", "sonic-turbo"],
+  elevenlabs: ["eleven_turbo_v2_5", "eleven_multilingual_v2"]
+};
+
+function defaultSttModel(provider: string) {
+  return sttModelsByProvider[provider]?.[0] ?? "";
+}
+
+function defaultTtsModel(provider: string) {
+  return ttsModelsByProvider[provider]?.[0] ?? "";
+}
+
+export default function AudioTabView({ agent, onAgentChange }: AudioTabViewProps) {
+  const { data: voices = [] } = useVoices();
+  const normalizedStt = agent.sttProvider.toLowerCase();
+  const normalizedTts = agent.ttsProvider.toLowerCase();
+  const sttModels = sttModelsByProvider[normalizedStt] ?? sttModelsByProvider["cartesia"];
+  const ttsModels = ttsModelsByProvider[normalizedTts] ?? ttsModelsByProvider["cartesia"];
+
+  const { data: sttCredentials = [] } = useAiCredentials(normalizedStt as AiProvider);
+  const { data: ttsCredentials = [] } = useAiCredentials(normalizedTts as AiProvider);
+
+  const isCartesiaTts = normalizedTts === "cartesia";
+
+  function handleSttProviderChange(provider: string) {
+    onAgentChange({ sttProvider: provider, sttModel: defaultSttModel(provider) });
+  }
+
+  function handleTtsProviderChange(provider: string) {
+    onAgentChange({ ttsProvider: provider, ttsModel: defaultTtsModel(provider) });
+  }
+
+  return (
+    <div className="tab-stack">
+      <SectionCard title="Configure Language">
+        <label className="field">
+          <span>Language</span>
+          <Select value={agent.language} onChange={(event) => onAgentChange({ language: event.target.value })}>
+            {languages.map((language) => (
+              <option key={language} value={language}>
+                {language}
+              </option>
+            ))}
+          </Select>
+        </label>
+      </SectionCard>
+
+      <SectionCard title="Speech-to-Text">
+        <div className="form-grid form-grid--2">
+          <label className="field">
+            <span>Provider</span>
+            <Select value={normalizedStt} onChange={(event) => handleSttProviderChange(event.target.value)}>
+              {sttProviders.map((provider) => (
+                <option key={provider} value={provider}>
+                  {sttProviderLabels[provider] ?? provider}
+                </option>
+              ))}
+            </Select>
+          </label>
+          <label className="field">
+            <span>Model</span>
+            <Select value={agent.sttModel} onChange={(event) => onAgentChange({ sttModel: event.target.value })}>
+              {sttModels.map((model) => (
+                <option key={model} value={model}>
+                  {model}
+                </option>
+              ))}
+            </Select>
+          </label>
+        </div>
+        <label className="field">
+          <span>Keywords</span>
+          <Input value={agent.keywords} onChange={(event) => onAgentChange({ keywords: event.target.value })} />
+        </label>
+        <label className="field" style={{ marginTop: 12 }}>
+          <span>API Credential</span>
+          <Select
+            value={agent.sttCredentialId || ""}
+            onChange={(event) => onAgentChange({ sttCredentialId: event.target.value })}
+          >
+            <option value="">Use default / env fallback</option>
+            {sttCredentials.map((cred) => (
+              <option key={cred.id} value={cred.id}>
+                {cred.name} {cred.isDefault ? "(default)" : ""}
+              </option>
+            ))}
+          </Select>
+          {sttCredentials.length === 0 && (
+            <small style={{ color: "#94a3b8" }}>
+              No {normalizedStt} credentials added yet. Add them in Settings → AI Services.
+            </small>
+          )}
+        </label>
+      </SectionCard>
+
+      <SectionCard title="Text-to-Speech">
+        <div className="form-grid form-grid--3">
+          <label className="field">
+            <span>Provider</span>
+            <Select value={normalizedTts} onChange={(event) => handleTtsProviderChange(event.target.value)}>
+              {ttsProviders.map((provider) => (
+                <option key={provider} value={provider}>
+                  {ttsProviderLabels[provider] ?? provider}
+                </option>
+              ))}
+            </Select>
+          </label>
+          <label className="field">
+            <span>Model</span>
+            <Select value={agent.ttsModel} onChange={(event) => onAgentChange({ ttsModel: event.target.value })}>
+              {ttsModels.map((model) => (
+                <option key={model} value={model}>
+                  {model}
+                </option>
+              ))}
+            </Select>
+          </label>
+          <label className="field">
+            <span>Voice</span>
+            {voices.filter((v) => v.provider === normalizedTts).length > 0 ? (
+              <Select
+                value={agent.ttsVoiceName}
+                onChange={(event) => onAgentChange({ ttsVoiceName: event.target.value })}
+              >
+                <option value="">Select a voice...</option>
+                {voices
+                  .filter((v) => v.provider === normalizedTts)
+                  .map((v) => (
+                    <option key={v.id} value={v.voiceId}>
+                      {v.name}{v.gender ? ` (${v.gender})` : ""}{v.language ? ` — ${v.language}` : ""}{v.isDefault ? " [Default]" : ""}
+                    </option>
+                  ))}
+                <option value="__custom">Custom Voice ID...</option>
+              </Select>
+            ) : (
+              <Input
+                value={agent.ttsVoiceName}
+                placeholder={isCartesiaTts ? "Cartesia voice UUID" : "ElevenLabs voice ID"}
+                onChange={(event) => onAgentChange({ ttsVoiceName: event.target.value })}
+              />
+            )}
+            {agent.ttsVoiceName === "__custom" && (
+              <Input
+                style={{ marginTop: 6 }}
+                value=""
+                placeholder="Paste voice UUID here"
+                onChange={(event) => onAgentChange({ ttsVoiceName: event.target.value })}
+              />
+            )}
+          </label>
+        </div>
+
+        <div className="form-grid form-grid--2">
+          <div className="field">
+            <span>Buffer Size</span>
+            <div className="slider-row">
+              <Slider
+                value={agent.ttsBufferSize}
+                min={0}
+                max={300}
+                step={1}
+                onChange={(value) => onAgentChange({ ttsBufferSize: value })}
+                ariaLabel="TTS buffer size"
+              />
+              <Input value={agent.ttsBufferSize} onChange={(event) => onAgentChange({ ttsBufferSize: Number(event.target.value) || 0 })} />
+            </div>
+          </div>
+          <div className="field">
+            <span>Speed rate</span>
+            <div className="slider-row">
+              <Slider
+                value={agent.ttsSpeedRate}
+                min={0.5}
+                max={1.5}
+                step={0.05}
+                onChange={(value) => onAgentChange({ ttsSpeedRate: Number(value.toFixed(2)) })}
+                ariaLabel="TTS speed rate"
+              />
+              <Input
+                value={agent.ttsSpeedRate}
+                onChange={(event) =>
+                  onAgentChange({
+                    ttsSpeedRate: Number.parseFloat(event.target.value || "0")
+                  })
+                }
+              />
+            </div>
+          </div>
+
+          <label className="field" style={{ gridColumn: "span 2" }}>
+            <span>API Credential</span>
+            <Select
+              value={agent.ttsCredentialId || ""}
+              onChange={(event) => onAgentChange({ ttsCredentialId: event.target.value })}
+            >
+              <option value="">Use default / env fallback</option>
+              {ttsCredentials.map((cred) => (
+                <option key={cred.id} value={cred.id}>
+                  {cred.name} {cred.isDefault ? "(default)" : ""}
+                </option>
+              ))}
+            </Select>
+            {ttsCredentials.length === 0 && (
+              <small style={{ color: "#94a3b8" }}>
+                No {normalizedTts} credentials added yet. Add them in Settings → AI Services.
+              </small>
+            )}
+          </label>
+
+          {/* ElevenLabs-specific voice controls — hidden for Cartesia */}
+          {!isCartesiaTts && (
+            <>
+              <div className="field">
+                <span>Similarity Boost</span>
+                <div className="slider-row">
+                  <Slider
+                    value={agent.ttsSimilarityBoost}
+                    min={0}
+                    max={1}
+                    step={0.05}
+                    onChange={(value) => onAgentChange({ ttsSimilarityBoost: Number(value.toFixed(2)) })}
+                    ariaLabel="TTS similarity boost"
+                  />
+                  <Input
+                    value={agent.ttsSimilarityBoost}
+                    onChange={(event) =>
+                      onAgentChange({
+                        ttsSimilarityBoost: Number.parseFloat(event.target.value || "0")
+                      })
+                    }
+                  />
+                </div>
+              </div>
+              <div className="field">
+                <span>Stability</span>
+                <div className="slider-row">
+                  <Slider
+                    value={agent.ttsStability}
+                    min={0}
+                    max={1}
+                    step={0.05}
+                    onChange={(value) => onAgentChange({ ttsStability: Number(value.toFixed(2)) })}
+                    ariaLabel="TTS stability"
+                  />
+                  <Input
+                    value={agent.ttsStability}
+                    onChange={(event) =>
+                      onAgentChange({
+                        ttsStability: Number.parseFloat(event.target.value || "0")
+                      })
+                    }
+                  />
+                </div>
+              </div>
+              <div className="field">
+                <span>Style Exaggeration</span>
+                <div className="slider-row">
+                  <Slider
+                    value={agent.ttsStyleExaggeration}
+                    min={0}
+                    max={1}
+                    step={0.05}
+                    onChange={(value) => onAgentChange({ ttsStyleExaggeration: Number(value.toFixed(2)) })}
+                    ariaLabel="TTS style exaggeration"
+                  />
+                  <Input
+                    value={agent.ttsStyleExaggeration}
+                    onChange={(event) =>
+                      onAgentChange({
+                        ttsStyleExaggeration: Number.parseFloat(event.target.value || "0")
+                      })
+                    }
+                  />
+                </div>
+              </div>
+            </>
+          )}
+        </div>
+      </SectionCard>
+    </div>
+  );
+}

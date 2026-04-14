@@ -1,0 +1,13 @@
+{
+  "name": "@screening/shared",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "scripts": {
+    "lint": "echo shared package lint placeholder",
+    "typecheck": "echo shared package typecheck placeholder",
+    "build": "echo shared package build placeholder"
+  }
+}
