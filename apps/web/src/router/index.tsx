@@ -12,6 +12,7 @@ import BatchesPage from "@/pages/batches/BatchesPage";
 import BatchCreatePage from "@/pages/batches/BatchCreatePage";
 import BatchDetailPage from "@/pages/batches/BatchDetailPage";
 import CallHistoryPage from "@/pages/calls/CallHistoryPage";
+import RatingsPage from "@/pages/ratings/RatingsPage";
 import DocumentationPage from "@/pages/documentation/DocumentationPage";
 import NumbersPage from "@/pages/numbers/NumbersPage";
 import SettingsPage from "@/pages/settings/SettingsPage";
@@ -58,6 +59,8 @@ export const router = createBrowserRouter([
       { path: "/batches/:batchId/items", element: <RoleGuard allowedRoles={["admin", "manager", "recruiter", "viewer"]}><BatchDetailPage tab="items" /></RoleGuard> },
       { path: "/calls", element: <CallHistoryPage /> },
       { path: "/calls/:callId", element: <CallHistoryPage /> },
+      { path: "/ratings", element: <RoleGuard allowedRoles={["admin", "manager", "recruiter", "viewer"]}><RatingsPage /></RoleGuard> },
+      { path: "/ratings/:callId", element: <RoleGuard allowedRoles={["admin", "manager", "recruiter", "viewer"]}><RatingsPage /></RoleGuard> },
       { path: "/numbers", element: <RoleGuard allowedRoles={["admin", "manager"]}><NumbersPage /></RoleGuard> },
       { path: "/settings", element: <Navigate to="/settings/providers" replace /> },
       { path: "/settings/workspace", element: <RoleGuard allowedRoles={["admin"]}><SettingsPage tab="workspace" /></RoleGuard> },

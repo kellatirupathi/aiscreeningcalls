@@ -455,6 +455,8 @@ agentRoutes.post(
       data: {
         organizationId: req.auth!.organizationId,
         agentId: agent.id,
+        targetName: "Test Caller",
+        targetPhone: phoneNumber,
         telephonyProvider: agent.telephonyProvider,
         status: "queued"
       }

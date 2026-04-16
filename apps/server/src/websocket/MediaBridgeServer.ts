@@ -174,6 +174,13 @@ async function handleCallSession(ws: WebSocket, callId: string): Promise<void> {
   let isClosed = false;
   let streamSid = "";
   let queuedUtterance = ""; // holds user speech that arrived while isProcessing was true
+  let carryOverUtterance = ""; // fragments captured while agent was speaking — merged after
+  let carryOverUpdatedAt = 0;  // timestamp of last carry-over update (for staleness check)
+  let isTerminating = false;   // set when closing phrase fires — ignores all further user input
+  let consecutiveSkips = 0;    // counts consecutive "I don't know" / skip answers
+  let silencePromptStage = 0;  // 0=none, 1="Are you there?", 2="Shall we skip?"
+  let extendedSilence = false; // true when candidate said "hold on" — extends silence to 120s
+  const CARRY_OVER_MAX_AGE_MS = 5000;
 
   // --- Retrieve welcome audio from cache ---
   // callWorker already started synthesizing this in parallel with the dial,
@@ -225,12 +232,47 @@ async function handleCallSession(ws: WebSocket, callId: string): Promise<void> {
 
   // --- Helpers ---
 
+  // Phrases that indicate candidate wants a moment — extend silence timer
+  const HOLD_PHRASES = new Set([
+    "hold on", "one moment", "one second", "give me a minute",
+    "give me a moment", "give me a sec", "just a moment", "just a second",
+    "just a sec", "wait", "wait a moment", "let me think",
+    "let me check", "one minute"
+  ]);
+
+  function isHoldPhrase(text: string): boolean {
+    const lower = text.toLowerCase().replace(/[.,!?]+/g, "").trim();
+    return HOLD_PHRASES.has(lower) || Array.from(HOLD_PHRASES).some((p) => lower.includes(p));
+  }
+
   function resetSilenceTimer(): void {
     if (!agent.hangupOnSilence) return;
     if (silenceTimer) clearTimeout(silenceTimer);
+    silencePromptStage = 0;
+    extendedSilence = false;
+
+    // Simple: just hang up after the full timeout. No intermediate prompts.
     silenceTimer = setTimeout(() => {
       if (!isClosed) void endCall("silence-timeout");
     }, agent.hangupOnSilenceSeconds * 1000);
+  }
+
+  // Keep this stub so existing callers don't break
+  function scheduleNextSilenceStage(_stage1Ms: number, _stage2Ms: number, _stage3Ms: number): void {
+    // No-op — progressive prompts removed.
+    void _stage1Ms; void _stage2Ms; void _stage3Ms;
+  }
+
+  function resetSilenceTimerExtended(): void {
+    if (!agent.hangupOnSilence) return;
+    if (silenceTimer) clearTimeout(silenceTimer);
+    silencePromptStage = 0;
+    extendedSilence = true;
+    // Extended: 120s total, no intermediate prompts
+    silenceTimer = setTimeout(() => {
+      if (!isClosed) void endCall("silence-timeout");
+    }, 120_000);
+    console.log(`[MediaBridge] Silence timer extended to 120s (candidate asked for time)`);
   }
 
   async function playAudio(audioBuffer: Buffer): Promise<void> {
@@ -284,8 +326,21 @@ async function handleCallSession(ws: WebSocket, callId: string): Promise<void> {
   async function speakAudio(audioBuffer: Buffer): Promise<void> {
     isSpeaking = true;
     speechStartedAt = Date.now(); // Track for interrupt lockout
-    pendingUtterance = "";
     if (utteranceTimer) clearTimeout(utteranceTimer);
+
+    // Wipe any stale pendingUtterance left over from the PREVIOUS turn.
+    // Without this, trailing STT fragments from the last answer leak into
+    // the next question's answer ("Express is a framework... No, async is...").
+    // If there IS pending text, move it to carry-over so it can still be
+    // captured — but it will be discarded if stale (>5s) after speech ends.
+    if (pendingUtterance.trim()) {
+      carryOverUtterance = carryOverUtterance
+        ? `${carryOverUtterance} ${pendingUtterance}`
+        : pendingUtterance;
+      carryOverUpdatedAt = Date.now();
+      console.log(`[MediaBridge] Moving pending to carry-over on speech start: "${pendingUtterance}"`);
+      pendingUtterance = "";
+    }
 
     await playAudio(audioBuffer);
 
@@ -296,6 +351,37 @@ async function handleCallSession(ws: WebSocket, callId: string): Promise<void> {
       setTimeout(() => {
         isSpeaking = false;
         console.log(`[MediaBridge] Done speaking, now listening`);
+
+        // Fix 2: flush carry-over captured during agent speech so candidate's
+        // mid-speech response is never lost.
+        // APPEND carry-over to pendingUtterance (carry-over is chronologically
+        // LATER than pendingUtterance — it was captured while the agent was
+        // speaking, AFTER pendingUtterance was already accumulated).
+        if (carryOverUtterance && !isClosed && !isTerminating) {
+          const ageMs = Date.now() - carryOverUpdatedAt;
+          if (ageMs <= CARRY_OVER_MAX_AGE_MS) {
+            pendingUtterance = pendingUtterance
+              ? `${pendingUtterance} ${carryOverUtterance}`
+              : carryOverUtterance;
+            console.log(`[MediaBridge] Flushing carry-over (${ageMs}ms old): "${carryOverUtterance}"`);
+
+            const debounceMs = getSmartDebounceMs(pendingUtterance);
+            if (utteranceTimer) clearTimeout(utteranceTimer);
+            utteranceTimer = setTimeout(() => {
+              if (pendingUtterance.trim()) {
+                const full = pendingUtterance;
+                pendingUtterance = "";
+                console.log(`[MediaBridge] Full utterance (${debounceMs}ms debounce, post-speech flush): "${full}"`);
+                void processUserUtterance(full);
+              }
+            }, debounceMs);
+          } else {
+            console.log(`[MediaBridge] Discarding stale carry-over (${ageMs}ms old): "${carryOverUtterance}"`);
+          }
+          carryOverUtterance = "";
+          carryOverUpdatedAt = 0;
+        }
+
         resolve();
       }, playbackMs);
     });
@@ -346,10 +432,17 @@ async function handleCallSession(ws: WebSocket, callId: string): Promise<void> {
   // Only match phrases that clearly signal the agent is ENDING the call.
   // Avoid false positives like "thank you for sharing" or "that's all for this question".
   const closingPhrases = [
-    "have a good day", "goodbye", "good bye", "bye bye",
-    "take care", "we'll call back", "call you back",
-    "call back later", "end the call", "screening is complete",
-    "have a nice day", "this concludes", "that concludes"
+    "have a good day", "have a great day", "have a nice day",
+    "goodbye", "good bye", "bye bye", "take care",
+    "we'll call back", "call you back", "call back later",
+    "end the call", "end of the call", "ending the call",
+    "screening is complete", "this concludes", "that concludes",
+    "that's all the questions", "thats all the questions",
+    "all the questions are done", "that's all for", "thats all for",
+    "thank you for your time", "thanks for your time",
+    "we can continue at another time", "continue at another time",
+    "we will get back to you", "we'll get back to you",
+    "get back to you soon"
   ];
 
   function isClosingPhrase(text: string): boolean {
@@ -367,7 +460,7 @@ async function handleCallSession(ws: WebSocket, callId: string): Promise<void> {
   // Sentences are queued and played SEQUENTIALLY (not concurrently).
   // The candidate hears the first sentence in ~500ms instead of waiting 3-5s.
   async function processUserUtterance(transcript: string): Promise<void> {
-    if (!transcript.trim() || isClosed) return;
+    if (!transcript.trim() || isClosed || isTerminating) return;
 
     // If already processing, queue instead of dropping
     if (isProcessing) {
@@ -386,6 +479,59 @@ async function handleCallSession(ws: WebSocket, callId: string): Promise<void> {
     const utteranceReceivedAt = Date.now();
 
     try {
+      // #14: Detect skip/don't-know patterns in the user's utterance
+      const lowerTranscript = transcript.toLowerCase();
+      const isSkipAnswer =
+        lowerTranscript.includes("i don't know") ||
+        lowerTranscript.includes("i dont know") ||
+        lowerTranscript.includes("no idea") ||
+        lowerTranscript.includes("not sure") ||
+        lowerTranscript.includes("can we skip") ||
+        lowerTranscript.includes("skip this") ||
+        lowerTranscript.includes("move to next") ||
+        lowerTranscript.includes("next question");
+
+      if (isSkipAnswer) {
+        consecutiveSkips++;
+        console.log(`[MediaBridge] Skip detected (${consecutiveSkips} consecutive): "${transcript}"`);
+      } else if (transcript.trim().split(/\s+/).length >= 5) {
+        // Only reset skip counter if the candidate gave a real answer (5+ words)
+        consecutiveSkips = 0;
+      }
+
+      // #14: After 4 consecutive skips, inject a system hint so the LLM wraps up
+      if (consecutiveSkips >= 4) {
+        console.log(`[MediaBridge] 4+ consecutive skips — injecting early-termination hint`);
+        conversationHistory.push({
+          role: "system",
+          content: "The candidate has said 'I don't know' for 4+ consecutive questions. End the interview now with the closing script. Do not ask more questions."
+        });
+      }
+
+      // #1: Detect callback request — "call me later" / "I'm busy"
+      const isCallbackRequest =
+        lowerTranscript.includes("call me later") ||
+        lowerTranscript.includes("call me back") ||
+        lowerTranscript.includes("call me after") ||
+        lowerTranscript.includes("call back") ||
+        lowerTranscript.includes("i'm busy") ||
+        lowerTranscript.includes("im busy") ||
+        lowerTranscript.includes("not a good time") ||
+        lowerTranscript.includes("call me tomorrow") ||
+        lowerTranscript.includes("busy right now");
+
+      if (isCallbackRequest) {
+        console.log(`[MediaBridge] Callback request detected: "${transcript}"`);
+        // Store the raw callback note for later extraction
+        prisma.call.update({
+          where: { id: callId },
+          data: {
+            subStatus: "callback-requested",
+            extractedDataJson: { callbackNote: transcript, detectedAt: new Date().toISOString() }
+          }
+        }).catch((err) => console.error("[MediaBridge] Callback note save error:", (err as Error).message));
+      }
+
       // Non-blocking DB write for user turn
       sequenceNumber++;
       prisma.callTurn.create({
@@ -418,17 +564,23 @@ async function handleCallSession(ws: WebSocket, callId: string): Promise<void> {
 
           if (isClosingPhrase(sentence)) {
             closingDetected = true;
+            // Block any further transcript fragments the moment the LLM emits
+            // a closing phrase — we do NOT want another user turn once we've
+            // decided to say goodbye.
+            isTerminating = true;
+            carryOverUtterance = "";
+            carryOverUpdatedAt = 0;
+            pendingUtterance = "";
+            if (utteranceTimer) clearTimeout(utteranceTimer);
           }
 
-          // Chain each sentence: wait for previous to finish, then synthesize + play
+          // Chain each sentence: wait for previous to finish, then synthesize + play.
+          // Each link has its own .catch() so one failed sentence doesn't break the chain.
           playbackChain = playbackChain.then(async () => {
             if (isClosed) return;
             const audio = await synthesize(sentence);
             if (!audio || isClosed) return;
 
-            // Enforce natural conversational gap before the VERY FIRST sentence plays.
-            // LLM + TTS processing usually eats some of this naturally, so we only
-            // wait for the remainder. Feels like a real interviewer pausing to think.
             if (!firstSentencePlayed) {
               firstSentencePlayed = true;
               const elapsed = Date.now() - utteranceReceivedAt;
@@ -440,6 +592,9 @@ async function handleCallSession(ws: WebSocket, callId: string): Promise<void> {
             }
 
             await speakAudio(audio);
+          }).catch((err) => {
+            console.error(`[MediaBridge] Playback chain error for sentence: "${sentence.slice(0, 40)}":`, (err as Error).message);
+            isSpeaking = false;
           });
         },
         creds.openai.apiKey
@@ -471,15 +626,20 @@ async function handleCallSession(ws: WebSocket, callId: string): Promise<void> {
       }
     } catch (err) {
       console.error("[MediaBridge] LLM error:", (err as Error).message);
+      // Reset isSpeaking in case the error occurred mid-speech —
+      // otherwise the agent stays permanently silent.
+      isSpeaking = false;
     } finally {
       isProcessing = false;
 
-      // Process any queued utterance that arrived while we were busy
-      if (queuedUtterance.trim() && !isClosed) {
+      // Process any queued utterance that arrived while we were busy.
+      // AWAIT (not void) to prevent concurrent processUserUtterance calls
+      // which would fire two LLM requests and interleave audio.
+      if (queuedUtterance.trim() && !isClosed && !isTerminating) {
         const queued = queuedUtterance;
         queuedUtterance = "";
         console.log(`[MediaBridge] Processing queued utterance: "${queued}"`);
-        void processUserUtterance(queued);
+        await processUserUtterance(queued);
       }
     }
   }
@@ -529,31 +689,47 @@ async function handleCallSession(ws: WebSocket, callId: string): Promise<void> {
   // Trade-off: candidates who give ONE complete sentence and stop will wait
   // 6 seconds. This is acceptable because most technical answers are long.
 
+  // Fix 1: removed filler words ("okay", "ok", "hmm", "sure", "right", "hi",
+  // "hello", "hey", "fine", "great", "thanks", "please") — these are things
+  // candidates say WHILE THINKING, not terminal answers. Treating them as
+  // complete turns caused the agent to jump in before the real answer arrived.
+  // Only keep true yes/no acknowledgments and terminal markers.
   const SHORT_REPLIES = new Set([
-    "yes", "no", "yeah", "yep", "nope", "okay", "ok", "sure", "right",
-    "correct", "hmm", "hm", "fine", "great", "thanks", "thank you",
-    "go ahead", "start", "ready", "i'm ready", "yes start", "please",
-    "hello", "hi", "hey", "done", "finished", "that's it", "thats it",
+    "yes", "no", "yeah", "yep", "nope", "correct",
+    "ready", "i'm ready", "yes start", "start", "go ahead",
+    "done", "finished", "that's it", "thats it",
     "that's all", "thats all", "completed", "no more", "nothing"
   ]);
 
+  // Filler words — if an utterance is ONLY one of these, we wait as long as a
+  // long answer (4000 ms) because it's almost certainly a stall, not an answer.
+  const FILLER_WORDS = new Set([
+    "okay", "ok", "hmm", "hm", "uh", "um", "er", "so", "if", "hello", "hi", "hey",
+    "right", "sure", "fine", "great", "thanks", "thank", "please", "whatever"
+  ]);
+
   function getSmartDebounceMs(text: string): number {
-    const trimmed = text.trim().toLowerCase().replace(/[.,!?]+$/, "");
+    const trimmed = text.trim().toLowerCase().replace(/[.,!?"'-]+$/, "").replace(/^[.,!?"'-]+/, "");
     const wordCount = trimmed.split(/\s+/).filter(Boolean).length;
 
-    // ONLY clear short acknowledgments get fast response
+    // True short acknowledgments get a fast response (yes, no, yeah, etc.)
     if (SHORT_REPLIES.has(trimmed)) {
-      return 600;
+      return 1500;
     }
 
-    // Single word that's not in the list? Still treat as short
+    // Single-word FILLER → wait for real content (4000 ms, same as long answer).
+    // Prevents "Okay", "If", "Hmm", "Whatever" from firing the LLM prematurely.
+    if (wordCount === 1 && FILLER_WORDS.has(trimmed)) {
+      return 4000;
+    }
+
+    // Single real word that's not a filler — still give it some patience.
     if (wordCount === 1) {
-      return 600;
+      return 2500;
     }
 
-    // Everything else: be very patient. Candidates are thinking mid-answer.
-    // Don't fragment their explanations just because they paused between sentences.
-    return 6000;
+    // Everything else: candidates think mid-answer, pause between sentences.
+    return 4000;
   }
 
   // Interrupt lockout: during the first N ms of agent speech, do NOT allow
@@ -564,42 +740,101 @@ async function handleCallSession(ws: WebSocket, callId: string): Promise<void> {
 
   // ─── Transcript fragment handler with smart endpointing ───────────────────
   function handleTranscriptFragment(transcript: string) {
-    if (!transcript.trim() || isClosed) return;
+    const text = transcript.trim();
+    if (!text || isClosed) return;
+
+    // Once we've committed to ending the call, ignore all further user input.
+    // Prevents the LLM from restarting the intro when the user says "Okay"
+    // after the agent has already said goodbye.
+    if (isTerminating) {
+      console.log(`[MediaBridge] Ignoring fragment during termination: "${text}"`);
+      return;
+    }
 
     // --- Interruption handling ---
     if (isSpeaking) {
       const elapsedSinceSpeechStart = Date.now() - speechStartedAt;
 
-      // LOCKOUT: Don't allow interrupts during the first 3 seconds of agent speech.
-      // This gives the agent enough time to get its reply out without being
-      // cut off by candidate's continuing thought.
+      // LOCKOUT: Don't allow interrupts during the first N ms of agent speech.
+      // Fix 2: instead of discarding these fragments, carry them over so the
+      // candidate's mid-speech response is preserved and merged after playback.
       if (elapsedSinceSpeechStart < INTERRUPT_LOCKOUT_MS) {
-        console.log(`[MediaBridge] Interrupt lockout (${elapsedSinceSpeechStart}ms < ${INTERRUPT_LOCKOUT_MS}ms): ignoring "${transcript.trim()}"`);
+        carryOverUtterance = carryOverUtterance ? `${carryOverUtterance} ${text}` : text;
+        carryOverUpdatedAt = Date.now();
+        console.log(`[MediaBridge] Carry-over during lockout (${elapsedSinceSpeechStart}ms): "${text}"`);
         return;
       }
 
-      const wordCount = transcript.trim().split(/\s+/).length;
-      // Require at least 8 words to count as a REAL interruption.
-      // (Was 4, but that caused false interrupts when candidates continued
-      // their own answer naturally after a pause.)
-      const threshold = Math.max(8, agent.interruptAfterWords);
+      const wordCount = text.split(/\s+/).length;
+      // Fix 4: 8 → 4 words. Combined with carry-over, false interrupts are
+      // absorbed by the carry-over path instead of being blocked at the threshold.
+      const threshold = Math.max(4, agent.interruptAfterWords);
       if (wordCount >= threshold) {
-        console.log(`[MediaBridge] Candidate interrupted (${wordCount} words): "${transcript.trim()}"`);
+        console.log(`[MediaBridge] Candidate interrupted (${wordCount} words): "${text}"`);
         isSpeaking = false;
         if (ws.readyState === WebSocket.OPEN) {
           ws.send(JSON.stringify({ event: "clearAudio", streamId: streamSid }));
         }
+        // Fall through to accumulate into pendingUtterance below.
       } else {
-        console.log(`[MediaBridge] Ignoring during agent speech (${wordCount} words < ${threshold}): "${transcript.trim()}"`);
-        return; // Ignore echo / natural continuation / noise during agent speech
+        // Fix 2: short fragment during agent speech — carry over, don't discard.
+        carryOverUtterance = carryOverUtterance ? `${carryOverUtterance} ${text}` : text;
+        carryOverUpdatedAt = Date.now();
+        console.log(`[MediaBridge] Carry-over during speech (${wordCount} words < ${threshold}): "${text}"`);
+        return;
       }
+    }
+
+    // #8: Basic non-English detection — if STT returns text with unusual
+    // Unicode (Devanagari, Telugu, etc.) or known non-English markers, inject
+    // a language request into the next LLM turn via pending utterance prefix.
+    const hasNonLatin = /[^\u0000-\u007F\u00C0-\u024F]/.test(text);
+    if (hasNonLatin && text.length > 10) {
+      console.log(`[MediaBridge] Non-English text detected: "${text}"`);
+      // Prepend a hint so LLM asks candidate to speak English
+      pendingUtterance = pendingUtterance
+        ? `${pendingUtterance} [The candidate appears to be speaking in a non-English language] ${text}`
+        : `[The candidate appears to be speaking in a non-English language] ${text}`;
+
+      const debounceMs = getSmartDebounceMs(pendingUtterance);
+      if (utteranceTimer) clearTimeout(utteranceTimer);
+      utteranceTimer = setTimeout(() => {
+        if (pendingUtterance.trim()) {
+          const full = pendingUtterance;
+          pendingUtterance = "";
+          void processUserUtterance(full);
+        }
+      }, debounceMs);
+      return;
+    }
+
+    // #11: Detect "hold on" / "give me a minute" → extend silence timer
+    if (isHoldPhrase(text)) {
+      console.log(`[MediaBridge] Hold phrase detected: "${text}" — extending silence timer`);
+      resetSilenceTimerExtended();
+      void speakText("Sure, take your time.");
+      return;
     }
 
     resetSilenceTimer();
 
+    // Fix 2: merge any fresh carry-over from agent speech into pendingUtterance
+    // APPEND carry-over (carry-over is chronologically LATER than pendingUtterance).
+    if (carryOverUtterance) {
+      const ageMs = Date.now() - carryOverUpdatedAt;
+      if (ageMs <= CARRY_OVER_MAX_AGE_MS) {
+        pendingUtterance = pendingUtterance ? `${pendingUtterance} ${carryOverUtterance}` : carryOverUtterance;
+        console.log(`[MediaBridge] Merging carry-over into pending: "${carryOverUtterance}"`);
+      } else {
+        console.log(`[MediaBridge] Discarding stale carry-over (${ageMs}ms old): "${carryOverUtterance}"`);
+      }
+      carryOverUtterance = "";
+      carryOverUpdatedAt = 0;
+    }
+
     // Accumulate fragments
-    pendingUtterance = pendingUtterance ? `${pendingUtterance} ${transcript.trim()}` : transcript.trim();
-    console.log(`[MediaBridge] STT fragment: "${transcript.trim()}" | accumulated: "${pendingUtterance}"`);
+    pendingUtterance = pendingUtterance ? `${pendingUtterance} ${text}` : text;
+    console.log(`[MediaBridge] STT fragment: "${text}" | accumulated: "${pendingUtterance}"`);
 
     // Smart debounce based on what was said
     const debounceMs = getSmartDebounceMs(pendingUtterance);

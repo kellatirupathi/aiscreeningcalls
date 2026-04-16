@@ -216,6 +216,8 @@ batchRoutes.post(
         data: {
           organizationId: req.auth!.organizationId,
           agentId: batch.agentId,
+          targetName: item.name,
+          targetPhone: item.phone,
           telephonyProvider: batch.telephonyProvider,
           status: "queued",
           startedAt: new Date()

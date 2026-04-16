@@ -9,6 +9,7 @@ import {
   Menu,
   PhoneCall,
   PhoneForwarded,
+  Star,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
@@ -21,6 +22,7 @@ import type { UserRole } from "@/types";
 const navItems = [
   { label: "Agent Setup", to: "/agents", icon: LayoutDashboard, roles: ["admin", "manager"] as UserRole[] },
   { label: "Call History", to: "/calls", icon: PhoneCall, roles: ["admin", "manager", "recruiter", "viewer"] as UserRole[] },
+  { label: "Ratings", to: "/ratings", icon: Star, roles: ["admin", "manager", "recruiter", "viewer"] as UserRole[] },
   { label: "My Numbers", to: "/numbers", icon: Hash, roles: ["admin", "manager"] as UserRole[] },
   { label: "Batches", to: "/batches", icon: Boxes, roles: ["admin", "manager", "recruiter", "viewer"] as UserRole[] },
   { label: "Campaigns", to: "/campaigns", icon: PhoneForwarded, roles: ["admin", "manager", "recruiter", "viewer"] as UserRole[] },

@@ -170,7 +170,7 @@ callRoutes.post(
       campaignId: call.campaignId ?? undefined,
       studentId: call.studentId ?? undefined,
       agentId: call.agentId,
-      to: call.student?.phone ?? "",
+      to: call.student?.phone ?? call.targetPhone ?? "",
       from: fromNumber.phoneNumber,
       provider: call.telephonyProvider
     };

@@ -14,12 +14,29 @@ import { settingsRoutes } from "./routes/settings.routes.js";
 import { voiceRoutes } from "./routes/voices.routes.js";
 import { webhookRoutes } from "./routes/webhooks.routes.js";
 import { aiCredentialRoutes } from "./routes/aiCredentials.routes.js";
+import { ratingRoutes } from "./routes/ratings.routes.js";
+import { env } from "./config/env.js";
 
 export function createApp() {
   const app = express();
 
+  const isProduction = env.NODE_ENV === "production";
+  const allowedOrigins = [
+    "http://localhost:5173",
+    "http://localhost:3000",
+    env.SERVER_URL
+  ].filter(Boolean);
+
   app.use(cors({
-    origin: true,
+    origin: isProduction
+      ? (origin, callback) => {
+          if (!origin || allowedOrigins.some((o) => origin!.startsWith(o))) {
+            callback(null, true);
+          } else {
+            callback(null, false);
+          }
+        }
+      : true,
     credentials: true
   }));
   app.use(express.json());
@@ -38,6 +55,7 @@ export function createApp() {
   app.use("/api/campaigns", authMiddleware, campaignRoutes);
   app.use("/api/batches", authMiddleware, batchRoutes);
   app.use("/api/calls", authMiddleware, callRoutes);
+  app.use("/api/ratings", authMiddleware, ratingRoutes);
   app.use("/api/numbers", authMiddleware, numberRoutes);
   app.use("/api/voices", authMiddleware, voiceRoutes);
   app.use("/api/ai-credentials", authMiddleware, requireRoles(["admin", "manager"]), aiCredentialRoutes);

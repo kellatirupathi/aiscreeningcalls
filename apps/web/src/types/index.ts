@@ -121,6 +121,56 @@ export interface BatchRecord {
   status: "Running" | "Paused" | "Completed" | "Draft";
 }
 
+export interface SkillRating {
+  rating: number | null;
+  reason: string;
+  evidence: string;
+}
+
+export interface RatingRow {
+  id: string;
+  ratingStatus: "pending" | "rated" | "failed" | "skipped" | string;
+  callStatus: string;
+  source: "test" | "campaign" | "batch";
+  candidateName: string;
+  candidatePhone?: string | null;
+  phone: string;
+  agentId: string;
+  agentName: string;
+  campaignName: string;
+  provider: TelephonyProvider;
+  durationSeconds: number;
+  duration: string;
+  startedAt: string;
+  startedAtIso: string;
+  endedAtIso: string | null;
+  recordingUrl: string | null;
+  agentSkills: string[];
+  selfIntroRating: number | null;
+  selfIntroReason: string;
+  communicationRating: number | null;
+  communicationReason: string;
+  skillRatings: Record<string, SkillRating>;
+  overallRating: number | null;
+  ratingModel: string;
+  ratingError: string | null;
+  ratingGeneratedAt: string | null;
+  endReason: string;
+  subStatus: string | null;
+  callbackNote: string | null;
+}
+
+export interface RatingsResponse {
+  rows: RatingRow[];
+  skillColumns: string[];
+  pendingCount: number;
+}
+
+export interface RatingDetail extends RatingRow {
+  transcript: Array<{ speaker: "Agent" | "Candidate"; text: string }>;
+  summary: string;
+}
+
 export interface NumberRecord {
   id: string;
   provider: TelephonyProvider;

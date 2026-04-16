@@ -4,6 +4,7 @@ import { createApp } from "./app.js";
 import { createMediaBridgeServer } from "./websocket/MediaBridgeServer.js";
 import { prisma } from "./db/prisma.js";
 import "./workers/callWorker.js"; // activates Bull queue processor
+import "./workers/ratingWorker.js"; // activates rating queue + 5-min auto-tick
 
 const app = createApp();
 const server = createServer(app);

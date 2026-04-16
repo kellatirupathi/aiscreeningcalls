@@ -188,6 +188,8 @@ campaignRoutes.post(
           campaignId,
           studentId: student.id,
           agentId: campaign.agentId,
+          targetName: student.name,
+          targetPhone: student.phone,
           telephonyProvider: campaign.telephonyProvider,
           status: "queued",
           startedAt: new Date()

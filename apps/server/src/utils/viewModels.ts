@@ -105,6 +105,8 @@ interface CallEntity {
   startedAt: Date;
   durationSeconds: number | null;
   summaryText: string | null;
+  targetName: string | null;
+  targetPhone: string | null;
   student: StudentEntity | null;
   campaign: CampaignEntity | null;
   agent: AgentEntity | null;
@@ -303,8 +305,8 @@ export function mapPhoneNumber(number: PhoneNumberEntity, assignedAgentName?: st
 export function mapCall(call: CallEntity) {
   return {
     id: call.id,
-    studentName: call.student?.name ?? "Unknown student",
-    phone: call.student?.phone ?? "--",
+    studentName: call.student?.name ?? call.targetName ?? "Unknown student",
+    phone: call.student?.phone ?? call.targetPhone ?? "--",
     campaignName: call.campaign?.name ?? "--",
     agentName: call.agent?.name ?? "--",
     duration: formatDuration(call.durationSeconds),
@@ -355,6 +357,113 @@ export function mapStudent(student: StudentEntity) {
     status: titleCase(student.latestStatus),
     lastCalledAt: formatRelativeTime(student.lastCalledAt)
   };
+}
+
+export interface CallRatingEntity {
+  id: string;
+  callId: string;
+  candidatePhone: string | null;
+  candidateName: string | null;
+  selfIntroRating: number | null;
+  selfIntroReason: string | null;
+  communicationRating: number | null;
+  communicationReason: string | null;
+  skillRatings: unknown;
+  overallRating: number | null;
+  model: string;
+  status: string;
+  errorMessage: string | null;
+  generatedAt: Date;
+}
+
+export interface RatedCallEntity {
+  id: string;
+  telephonyProvider: string;
+  status: string;
+  subStatus: string | null;
+  startedAt: Date;
+  endedAt: Date | null;
+  durationSeconds: number | null;
+  recordingUrl: string | null;
+  ratingStatus: string;
+  campaignId: string | null;
+  organizationId: string;
+  targetName: string | null;
+  targetPhone: string | null;
+  extractedDataJson: unknown;
+  student: StudentEntity | null;
+  campaign: CampaignEntity | null;
+  agent: (AgentEntity & { ratingSkills?: unknown }) | null;
+  rating: CallRatingEntity | null;
+}
+
+export function mapRatedCall(call: RatedCallEntity) {
+  const skillRatings =
+    call.rating?.skillRatings && typeof call.rating.skillRatings === "object"
+      ? (call.rating.skillRatings as Record<string, { rating: number | null; reason: string; evidence: string }>)
+      : {};
+
+  const source: "test" | "campaign" | "batch" = call.campaignId ? "campaign" : "test";
+  const agentSkills = Array.isArray(call.agent?.ratingSkills)
+    ? ((call.agent?.ratingSkills as unknown[]).filter((v): v is string => typeof v === "string"))
+    : [];
+
+  const resolvedPhone = call.student?.phone ?? call.targetPhone ?? call.rating?.candidatePhone ?? null;
+  const resolvedName = call.student?.name ?? call.targetName ?? call.rating?.candidateName ?? null;
+
+  return {
+    id: call.id,
+    ratingStatus: call.ratingStatus,
+    callStatus: presentCallStatus(call.status),
+    source,
+    candidateName: resolvedName ?? "Test Caller",
+    candidatePhone: resolvedPhone,
+    phone: resolvedPhone ?? "--",
+    agentId: call.agent?.id ?? "",
+    agentName: call.agent?.name ?? "--",
+    campaignName: call.campaign?.name ?? "--",
+    provider: call.telephonyProvider as "plivo" | "exotel",
+    durationSeconds: call.durationSeconds ?? 0,
+    duration: formatDuration(call.durationSeconds),
+    startedAt: formatRelativeTime(call.startedAt),
+    startedAtIso: call.startedAt.toISOString(),
+    endedAtIso: call.endedAt ? call.endedAt.toISOString() : null,
+    recordingUrl: call.recordingUrl ?? null,
+    agentSkills,
+    selfIntroRating: call.rating?.selfIntroRating ?? null,
+    selfIntroReason: call.rating?.selfIntroReason ?? "",
+    communicationRating: call.rating?.communicationRating ?? null,
+    communicationReason: call.rating?.communicationReason ?? "",
+    skillRatings,
+    overallRating: call.rating?.overallRating ?? null,
+    ratingModel: call.rating?.model ?? "",
+    ratingError: call.rating?.errorMessage ?? null,
+    ratingGeneratedAt: call.rating?.generatedAt ? formatRelativeTime(call.rating.generatedAt) : null,
+    endReason: presentEndReason(call.status, call.subStatus),
+    subStatus: call.subStatus ?? null,
+    callbackNote: extractCallbackNote(call.extractedDataJson)
+  };
+}
+
+function presentEndReason(status: string, subStatus: string | null): string {
+  if (subStatus === "callback-requested") return "Callback requested";
+  switch (status) {
+    case "completed": return "Completed all questions";
+    case "silence-timeout": return "Candidate went silent";
+    case "timeout": return "Call time limit reached";
+    case "no-answer": return "No answer";
+    case "busy": return "Line busy";
+    case "failed": return "Call failed";
+    case "disconnected": return "Call dropped";
+    default: return presentCallStatus(status);
+  }
+}
+
+function extractCallbackNote(data: unknown): string | null {
+  if (data && typeof data === "object" && "callbackNote" in data) {
+    return String((data as Record<string, unknown>).callbackNote);
+  }
+  return null;
 }
 
 export function mapBatch(batch: BatchEntity, agentName?: string) {

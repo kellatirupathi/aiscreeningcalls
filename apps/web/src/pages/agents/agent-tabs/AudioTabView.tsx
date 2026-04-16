@@ -15,35 +15,63 @@ const languages = ["English", "Hindi"];
 
 const sttProviders = ["cartesia", "deepgram"];
 const sttProviderLabels: Record<string, string> = { cartesia: "Cartesia", deepgram: "Deepgram" };
-const sttModelsByProvider: Record<string, string[]> = {
+const baseSttModels: Record<string, string[]> = {
   cartesia: ["ink-whisper"],
   deepgram: ["nova-3", "nova-2"]
 };
 
 const ttsProviders = ["cartesia", "elevenlabs"];
 const ttsProviderLabels: Record<string, string> = { cartesia: "Cartesia", elevenlabs: "Elevenlabs" };
-const ttsModelsByProvider: Record<string, string[]> = {
+const baseTtsModels: Record<string, string[]> = {
   cartesia: ["sonic-2", "sonic-turbo"],
   elevenlabs: ["eleven_turbo_v2_5", "eleven_multilingual_v2"]
 };
 
+/** Merge hardcoded defaults with models configured on credentials.
+ *  Credentials saved in Settings → AI Services can specify a ttsModel / sttModel.
+ *  This function collects those and deduplicates so the dropdown always shows
+ *  models the user has configured, even if they're not in the hardcoded list. */
+function mergeModelsFromCredentials(
+  baseModels: string[],
+  credentials: Array<{ ttsModel?: string; sttModel?: string }>,
+  field: "ttsModel" | "sttModel"
+): string[] {
+  const set = new Set(baseModels);
+  for (const cred of credentials) {
+    const model = cred[field];
+    if (model && model.trim()) {
+      set.add(model.trim());
+    }
+  }
+  return Array.from(set);
+}
+
 function defaultSttModel(provider: string) {
-  return sttModelsByProvider[provider]?.[0] ?? "";
+  return baseSttModels[provider]?.[0] ?? "";
 }
 
 function defaultTtsModel(provider: string) {
-  return ttsModelsByProvider[provider]?.[0] ?? "";
+  return baseTtsModels[provider]?.[0] ?? "";
 }
 
 export default function AudioTabView({ agent, onAgentChange }: AudioTabViewProps) {
   const { data: voices = [] } = useVoices();
   const normalizedStt = agent.sttProvider.toLowerCase();
   const normalizedTts = agent.ttsProvider.toLowerCase();
-  const sttModels = sttModelsByProvider[normalizedStt] ?? sttModelsByProvider["cartesia"];
-  const ttsModels = ttsModelsByProvider[normalizedTts] ?? ttsModelsByProvider["cartesia"];
 
   const { data: sttCredentials = [] } = useAiCredentials(normalizedStt as AiProvider);
   const { data: ttsCredentials = [] } = useAiCredentials(normalizedTts as AiProvider);
+
+  const sttModels = mergeModelsFromCredentials(
+    baseSttModels[normalizedStt] ?? baseSttModels["cartesia"],
+    sttCredentials,
+    "sttModel"
+  );
+  const ttsModels = mergeModelsFromCredentials(
+    baseTtsModels[normalizedTts] ?? baseTtsModels["cartesia"],
+    ttsCredentials,
+    "ttsModel"
+  );
 
   const isCartesiaTts = normalizedTts === "cartesia";
 

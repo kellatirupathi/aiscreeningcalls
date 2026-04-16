@@ -44,17 +44,18 @@ webhookRoutes.get(
 webhookRoutes.post(
   "/plivo/status",
   asyncHandler(async (req, res) => {
+    // Respond to Plivo IMMEDIATELY so their HTTP client isn't blocked by our
+    // DB writes. All persistence runs asynchronously after the response.
+    res.json({ accepted: true });
+
     const body = req.body as Record<string, string>;
     const providerCallId = body.CallUUID ?? body.RequestUUID;
+    if (!providerCallId) return;
+
     const plivoStatus = body.CallStatus ?? body.Status ?? "";
     const duration = parseInt(body.Duration ?? "0", 10);
     const answeredTime = body.AnsweredTime ? new Date(parseInt(body.AnsweredTime) * 1000) : undefined;
     const endTime = body.EndTime ? new Date(parseInt(body.EndTime) * 1000) : new Date();
-
-    if (!providerCallId) {
-      res.json({ accepted: true });
-      return;
-    }
 
     const statusMap: Record<string, string> = {
       answered: "in-progress",
@@ -68,36 +69,41 @@ webhookRoutes.post(
     };
     const normalizedStatus = statusMap[plivoStatus.toLowerCase()] ?? "failed";
 
-    const call = await prisma.call.findFirst({
-      where: { providerCallId }
-    });
+    void (async () => {
+      try {
+        const call = await prisma.call.findFirst({ where: { providerCallId } });
+        if (!call) return;
 
-    if (!call) {
-      res.json({ accepted: true });
-      return;
-    }
+        const isTerminal = ["completed", "busy", "failed", "no-answer"].includes(normalizedStatus);
 
-    const isTerminal = ["completed", "busy", "failed", "no-answer"].includes(normalizedStatus);
+        // Guard against duplicate webhooks: don't overwrite a terminal status
+        // with another status (Plivo can retry, sending the same event twice).
+        const currentTerminal = ["completed", "busy", "failed", "no-answer"].includes(call.status);
+        if (currentTerminal && isTerminal && call.status !== normalizedStatus) {
+          console.log(`[webhook/plivo/status] Ignoring duplicate — call ${call.id} already ${call.status}, received ${normalizedStatus}`);
+          return;
+        }
 
-    await prisma.call.update({
-      where: { id: call.id },
-      data: {
-        status: normalizedStatus,
-        ...(duration > 0 ? { durationSeconds: duration } : {}),
-        ...(answeredTime ? { answeredAt: answeredTime } : {}),
-        ...(isTerminal ? { endedAt: endTime } : {})
+        await prisma.call.update({
+          where: { id: call.id },
+          data: {
+            status: normalizedStatus,
+            ...(duration > 0 ? { durationSeconds: duration } : {}),
+            ...(answeredTime ? { answeredAt: answeredTime } : {}),
+            ...(isTerminal ? { endedAt: endTime } : {})
+          }
+        });
+
+        if (isTerminal && call.studentId) {
+          await prisma.student.update({
+            where: { id: call.studentId },
+            data: { latestStatus: normalizedStatus, lastCalledAt: endTime }
+          });
+        }
+      } catch (err) {
+        console.error(`[webhook/plivo/status] async update failed for provider call ${providerCallId}:`, (err as Error).message);
       }
-    });
-
-    // Update student status on terminal events
-    if (isTerminal && call.studentId) {
-      await prisma.student.update({
-        where: { id: call.studentId },
-        data: { latestStatus: normalizedStatus, lastCalledAt: endTime }
-      });
-    }
-
-    res.json({ accepted: true });
+    })();
   })
 );
 

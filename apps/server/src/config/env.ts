@@ -46,3 +46,13 @@ const envSchema = z.object({
 });
 
 export const env = envSchema.parse(process.env);
+
+// Safety check: crash on startup if production uses default secrets
+if (env.NODE_ENV === "production") {
+  if (env.ENCRYPTION_KEY === "dev-encryption-key-change-this") {
+    throw new Error("ENCRYPTION_KEY must be set to a strong random value in production.");
+  }
+  if (env.JWT_SECRET === "replace-me") {
+    throw new Error("JWT_SECRET must be set to a strong random value in production.");
+  }
+}

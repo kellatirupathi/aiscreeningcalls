@@ -134,6 +134,7 @@ model Agent {
   extractionPrompt           String?
   analyticsWebhookUrl        String?
   inboundNumberId            String?
+  ratingSkills               Json?        // ["ReactJS","NodeJS","SQLite"] — dynamic rating columns
   createdAt                  DateTime     @default(now())
   updatedAt                  DateTime     @updatedAt
   campaigns                  Campaign[]
@@ -205,6 +206,8 @@ model Call {
   student           Student?     @relation(fields: [studentId], references: [id])
   agentId           String?
   agent             Agent?       @relation(fields: [agentId], references: [id])
+  targetName        String?
+  targetPhone       String?
   telephonyProvider String
   providerCallId    String?
   providerSessionId String?
@@ -221,9 +224,41 @@ model Call {
   extractedDataJson Json?
   errorCode         String?
   errorMessage      String?
+  ratingStatus      String       @default("pending") // pending | rated | failed | skipped
   createdAt         DateTime     @default(now())
   updatedAt         DateTime     @updatedAt
   turns             CallTurn[]
+  rating            CallRating?
+
+  @@index([organizationId, startedAt])
+  @@index([providerCallId])
+  @@index([status, ratingStatus])
+  @@index([agentId])
+}
+
+model CallRating {
+  id              String   @id @default(uuid()) @map("_id")
+  callId          String   @unique
+  call            Call     @relation(fields: [callId], references: [id])
+  organizationId  String
+  agentId         String?
+  candidatePhone  String?  // indexed so ratings can be looked up per candidate phone
+  candidateName   String?
+  selfIntroRating Int?
+  selfIntroReason String?
+  communicationRating Int?
+  communicationReason String?
+  skillRatings    Json     // { "ReactJS": { rating: 4, reason: "...", evidence: "..." }, ... }
+  overallRating   Float?
+  model           String
+  status          String   @default("rated") // rated | failed
+  errorMessage    String?
+  generatedAt     DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([organizationId, generatedAt])
+  @@index([agentId])
+  @@index([candidatePhone])
 }
 
 model CallTurn {
@@ -236,6 +271,8 @@ model CallTurn {
   startOffsetMs Int?
   endOffsetMs   Int?
   createdAt     DateTime @default(now())
+
+  @@index([callId, sequence])
 }
 
 model Voice {

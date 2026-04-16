@@ -2,7 +2,7 @@ import OpenAI from "openai";
 import { env } from "../../config/env.js";
 
 export interface ConversationMessage {
-  role: "user" | "assistant";
+  role: "user" | "assistant" | "system";
   content: string;
 }
 
