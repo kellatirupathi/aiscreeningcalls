@@ -42,6 +42,25 @@ export async function seedEnvCredentialsForOrganization(organizationId: string):
     console.log(`[EnvSeeder] Seeded OpenAI credential for org ${organizationId}`);
   }
 
+  // ─── Groq ───
+  if (!existingProviders.has("groq") && env.GROQ_API_KEY) {
+    const config: CredentialConfig = {
+      apiKey: env.GROQ_API_KEY,
+      defaultModel: env.GROQ_MODEL || "llama-3.1-8b-instant"
+    };
+    await prisma.aiCredential.create({
+      data: {
+        organizationId,
+        provider: "groq",
+        name: "Default (from .env)",
+        credentialsEncrypted: encryptJson(config),
+        isDefault: true
+      }
+    });
+    seededCount++;
+    console.log(`[EnvSeeder] Seeded Groq credential for org ${organizationId}`);
+  }
+
   // ─── Cartesia ───
   if (!existingProviders.has("cartesia") && env.CARTESIA_API_KEY) {
     const config: CredentialConfig = {

@@ -338,9 +338,6 @@ export default function AgentBuilderPage({ tab }: AgentBuilderPageProps) {
 
   return (
     <div className="agent-workspace">
-      <div className="agent-workspace__header">
-        <PageHeader title="Agent Setup" subtitle="Fine tune your agents" />
-      </div>
       <div className="agent-workspace__body">
         <AgentListPanel isImporting={createAgent.isPending} onImport={handleImport} />
         <div className="agent-workspace__center">

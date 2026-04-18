@@ -15,6 +15,7 @@ import {
 
 const PROVIDERS: { id: AiProvider; label: string; description: string }[] = [
   { id: "openai", label: "OpenAI", description: "LLM for agent responses (GPT-4o-mini, GPT-4o, etc.)" },
+  { id: "groq", label: "Groq", description: "Low-latency LLM (llama-3.1-8b-instant, llama-3.3-70b-versatile, etc.)" },
   { id: "cartesia", label: "Cartesia", description: "STT (ink-whisper) + TTS (sonic-2)" },
   { id: "elevenlabs", label: "ElevenLabs", description: "TTS with premium voices" },
   { id: "deepgram", label: "Deepgram", description: "STT (nova-3, nova-2)" },
@@ -271,13 +272,19 @@ export function AiCredentialsManager() {
                 />
               </label>
 
-              {(editingForm.provider === "openai" || editingForm.provider === "deepgram") && (
+              {(editingForm.provider === "openai" || editingForm.provider === "groq" || editingForm.provider === "deepgram") && (
                 <label className="field" style={{ gridColumn: "span 2" }}>
                   <span>Default Model</span>
                   <Input
                     value={editingForm.defaultModel}
                     onChange={(e) => setEditingForm({ ...editingForm, defaultModel: e.target.value })}
-                    placeholder={editingForm.provider === "openai" ? "gpt-4o-mini" : "nova-3"}
+                    placeholder={
+                      editingForm.provider === "openai"
+                        ? "gpt-4o-mini"
+                        : editingForm.provider === "groq"
+                        ? "llama-3.1-8b-instant"
+                        : "nova-3"
+                    }
                   />
                 </label>
               )}

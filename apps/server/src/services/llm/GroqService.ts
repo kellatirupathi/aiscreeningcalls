@@ -1,18 +1,16 @@
 import OpenAI from "openai";
 import { env } from "../../config/env.js";
+import type { ConversationMessage } from "./OpenAIService.js";
 
-export interface ConversationMessage {
-  role: "user" | "assistant" | "system";
-  content: string;
-}
+const GROQ_BASE_URL = "https://api.groq.com/openai/v1";
 
-export class OpenAIService {
+export class GroqService {
   private getClient(apiKey?: string): OpenAI {
-    const key = apiKey || env.OPENAI_API_KEY;
+    const key = apiKey || env.GROQ_API_KEY;
     if (!key) {
-      throw new Error("OPENAI_API_KEY is not configured.");
+      throw new Error("GROQ_API_KEY is not configured.");
     }
-    return new OpenAI({ apiKey: key });
+    return new OpenAI({ apiKey: key, baseURL: GROQ_BASE_URL });
   }
 
   private buildMessages(
@@ -30,19 +28,16 @@ export class OpenAIService {
       "- If the candidate says \"What?\", \"Pardon?\", \"Say again?\", \"Repeat please\", \"I didn't catch that\", \"Sorry?\", \"Come again?\", \"Could you repeat?\", or anything similar — ONLY REPEAT THE EXACT SAME QUESTION you asked before, word-for-word or slightly rephrased. DO NOT explain what the concept is. DO NOT give any hints.",
       "- If the candidate says \"I don't know\" or \"I'm not sure\" — respond with \"No problem\" or \"That's okay\" and MOVE ON to the NEXT question. DO NOT tell them the answer.",
       "- If the candidate gives a wrong answer — acknowledge neutrally (\"Okay\", \"Got it\", \"Thanks\") and move on. DO NOT correct them. DO NOT tell them what the right answer was.",
-      "- Example of WRONG behavior: Candidate says \"What?\" → Agent explains \"Props are used to pass data from parent to child...\" ❌",
-      "- Example of CORRECT behavior: Candidate says \"What?\" → Agent says \"Let me repeat. What is the difference between props and state in ReactJS?\" ✓",
       "",
       "CONVERSATION STYLE:",
-      "- Always START your response with a brief, natural acknowledgment (1-3 words) that reflects what the candidate just said, BEFORE asking the next question. This makes you sound like a real interviewer who is actually listening.",
+      "- Always START your response with a brief, natural acknowledgment (1-3 words) that reflects what the candidate just said, BEFORE asking the next question.",
       "- Good acknowledgment examples: \"Got it.\", \"That makes sense.\", \"Interesting.\", \"Good explanation.\", \"Thanks for sharing.\", \"I see.\", \"Alright.\", \"Perfect.\", \"Understood.\", \"No problem.\"",
       "- Vary your acknowledgments — don't use the same one every time.",
-      "- Match the tone to the answer: if candidate struggled, say \"No problem\" or \"That's okay\". If they explained well, say \"Good explanation\" or \"Great\". If neutral, say \"Got it\" or \"I see\".",
-      "- Prefer ONE short spoken sentence whenever possible. Do not split a reply into separate filler sentences like \"Got it.\" followed by another sentence unless absolutely necessary.",
+      "- Prefer ONE short spoken sentence whenever possible. Do not split a reply into separate filler sentences unless absolutely necessary.",
       "- When moving to the next question, combine the acknowledgment and the question into one compact response when you can.",
       "",
       "HANDLING INCOMPLETE ANSWERS:",
-      "- If a candidate's answer seems too short, incomplete, or vague (e.g. just a few words when a longer answer was expected), ask them to \"please continue\" or \"tell me more\" WITHOUT revealing any part of the answer.",
+      "- If a candidate's answer seems too short, incomplete, or vague, ask them to \"please continue\" or \"tell me more\" WITHOUT revealing any part of the answer.",
       "- Never skip ahead to the next question until the candidate has given a reasonably complete answer to the current one.",
       "- If after asking twice for more details the candidate still cannot answer, accept what they said and move to the next question. DO NOT reveal the answer.",
       "",
@@ -79,12 +74,6 @@ export class OpenAIService {
     return completion.choices[0]?.message?.content?.trim() ?? "";
   }
 
-  /**
-   * Streams LLM response and calls onSentence() for each complete sentence.
-   * This allows TTS to start synthesizing the first sentence while the LLM
-   * is still generating the rest — cutting latency by 1-2 seconds.
-   * Returns the full response text when done.
-   */
   async streamNextTurn(
     systemPrompt: string,
     history: ConversationMessage[],
@@ -116,7 +105,6 @@ export class OpenAIService {
       buffer += token;
       fullResponse += token;
 
-      // Check if buffer contains a complete sentence
       let match: RegExpExecArray | null;
       while ((match = sentenceEnders.exec(buffer)) !== null) {
         const sentenceEnd = match.index + match[1].length;
@@ -129,63 +117,13 @@ export class OpenAIService {
       }
     }
 
-    // Flush remaining buffer as the last sentence
     const remaining = buffer.trim();
     if (remaining) {
       onSentence(remaining, true);
     } else {
-      // Signal completion even if buffer was empty (last sentence already sent)
       onSentence("", true);
     }
 
     return fullResponse.trim();
-  }
-
-  async summarize(transcript: string, agentName: string): Promise<string> {
-    const client = this.getClient();
-    const model = env.OPENAI_MODEL ?? "gpt-4o-mini";
-
-    const completion = await client.chat.completions.create({
-      model,
-      messages: [
-        {
-          role: "user",
-          content: `Summarize this voice screening call conducted by AI agent "${agentName}" in 2-3 concise sentences. Focus on candidate's key responses and overall outcome.\n\nTranscript:\n${transcript}`
-        }
-      ],
-      temperature: 0.3,
-      max_tokens: 200
-    });
-
-    return completion.choices[0]?.message?.content?.trim() ?? "";
-  }
-
-  async extract(transcript: string, extractionPrompt: string): Promise<Record<string, unknown>> {
-    const client = this.getClient();
-    const model = env.OPENAI_MODEL ?? "gpt-4o-mini";
-
-    const completion = await client.chat.completions.create({
-      model,
-      messages: [
-        {
-          role: "system",
-          content: "You are a data extraction assistant. Extract information from call transcripts and return valid JSON only."
-        },
-        {
-          role: "user",
-          content: `${extractionPrompt}\n\nCall transcript:\n${transcript}\n\nReturn only valid JSON, no markdown.`
-        }
-      ],
-      temperature: 0.1,
-      max_tokens: 500,
-      response_format: { type: "json_object" }
-    });
-
-    try {
-      const raw = completion.choices[0]?.message?.content ?? "{}";
-      return JSON.parse(raw) as Record<string, unknown>;
-    } catch {
-      return {};
-    }
   }
 }

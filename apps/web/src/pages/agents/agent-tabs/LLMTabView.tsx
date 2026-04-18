@@ -1,8 +1,9 @@
+import { useEffect } from "react";
 import { Input } from "@/components/ui/Input";
 import { Select } from "@/components/ui/Select";
 import { Slider } from "@/components/ui/Slider";
 import { SectionCard } from "@/components/agent-builder/SectionCard";
-import { useAiCredentials } from "@/hooks/useAiCredentials";
+import { useAiCredentials, type AiProvider } from "@/hooks/useAiCredentials";
 import type { AgentRecord } from "@/types";
 
 interface LLMTabViewProps {
@@ -10,11 +11,41 @@ interface LLMTabViewProps {
   onAgentChange: (changes: Partial<AgentRecord>) => void;
 }
 
-const llmProviders = ["OpenAI"];
-const llmModels = ["gpt-4o-mini", "gpt-4o", "gpt-4.1-mini", "gpt-4.1", "gpt-4.1-nano", "o4-mini"];
+// Option values match backend titleCase output (readProvider lowercases on save,
+// mapAgent→titleCase returns "Openai"/"Groq" on load).
+const LLM_PROVIDERS: { value: string; label: string }[] = [
+  { value: "Openai", label: "OpenAI" },
+  { value: "Groq", label: "Groq" }
+];
+
+const MODELS_BY_PROVIDER: Record<string, string[]> = {
+  openai: ["gpt-4o-mini", "gpt-4o", "gpt-4.1-mini", "gpt-4.1", "gpt-4.1-nano", "o4-mini"],
+  groq: [
+    "llama-3.1-8b-instant",
+    "llama-3.3-70b-versatile",
+    "llama-3.1-70b-versatile",
+    "openai/gpt-oss-20b",
+    "mixtral-8x7b-32768",
+    "gemma2-9b-it"
+  ]
+};
+
+function providerKey(llmProvider: string): AiProvider {
+  return llmProvider.toLowerCase() === "groq" ? "groq" : "openai";
+}
 
 export default function LLMTabView({ agent, onAgentChange }: LLMTabViewProps) {
-  const { data: credentials = [] } = useAiCredentials("openai");
+  const provider = providerKey(agent.llmProvider);
+  const { data: credentials = [] } = useAiCredentials(provider);
+  const modelOptions = MODELS_BY_PROVIDER[provider] ?? MODELS_BY_PROVIDER.openai;
+
+  // If the currently selected model isn't valid for the selected provider,
+  // snap it to the first valid model for that provider.
+  useEffect(() => {
+    if (!modelOptions.includes(agent.llmModel)) {
+      onAgentChange({ llmModel: modelOptions[0], llmCredentialId: "" });
+    }
+  }, [provider, agent.llmModel, modelOptions, onAgentChange]);
 
   return (
     <div className="tab-stack">
@@ -22,10 +53,22 @@ export default function LLMTabView({ agent, onAgentChange }: LLMTabViewProps) {
         <div className="form-grid form-grid--2">
           <label className="field">
             <span>Provider</span>
-            <Select value={agent.llmProvider} onChange={(event) => onAgentChange({ llmProvider: event.target.value })}>
-              {llmProviders.map((provider) => (
-                <option key={provider} value={provider}>
-                  {provider}
+            <Select
+              value={agent.llmProvider}
+              onChange={(event) => {
+                const newProvider = event.target.value;
+                const newKey = providerKey(newProvider);
+                const newModels = MODELS_BY_PROVIDER[newKey] ?? MODELS_BY_PROVIDER.openai;
+                onAgentChange({
+                  llmProvider: newProvider,
+                  llmModel: newModels[0],
+                  llmCredentialId: ""
+                });
+              }}
+            >
+              {LLM_PROVIDERS.map((p) => (
+                <option key={p.value} value={p.value}>
+                  {p.label}
                 </option>
               ))}
             </Select>
@@ -33,7 +76,7 @@ export default function LLMTabView({ agent, onAgentChange }: LLMTabViewProps) {
           <label className="field">
             <span>Model</span>
             <Select value={agent.llmModel} onChange={(event) => onAgentChange({ llmModel: event.target.value })}>
-              {llmModels.map((model) => (
+              {modelOptions.map((model) => (
                 <option key={model} value={model}>
                   {model}
                 </option>
@@ -56,7 +99,7 @@ export default function LLMTabView({ agent, onAgentChange }: LLMTabViewProps) {
           </Select>
           {credentials.length === 0 && (
             <small style={{ color: "#94a3b8" }}>
-              No OpenAI credentials added yet. Add them in Settings → AI Services.
+              No {provider === "groq" ? "Groq" : "OpenAI"} credentials added yet. Add them in Settings → AI Services.
             </small>
           )}
         </label>

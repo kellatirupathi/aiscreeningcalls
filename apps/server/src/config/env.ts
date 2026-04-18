@@ -26,6 +26,8 @@ const envSchema = z.object({
   EXOTEL_DEFAULT_NUMBER: z.string().optional(),
   OPENAI_API_KEY: z.string().optional(),
   OPENAI_MODEL: z.string().optional(),
+  GROQ_API_KEY: z.string().optional(),
+  GROQ_MODEL: z.string().optional(),
   CARTESIA_API_KEY: z.string().optional(),
   CARTESIA_DEFAULT_VOICE_ID: z.string().optional(),
   CARTESIA_STT_MODEL: z.string().optional(),

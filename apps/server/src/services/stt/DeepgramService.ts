@@ -6,6 +6,9 @@ export type TranscriptCallback = (
   speechFinal: boolean
 ) => void;
 
+/** Fired when Deepgram's VAD detects the speaker truly stopped talking. */
+export type UtteranceEndCallback = () => void;
+
 interface DeepgramResultMessage {
   type: string;
   is_final?: boolean;
@@ -20,6 +23,8 @@ export class DeepgramService {
    * Opens a Deepgram streaming STT WebSocket session.
    * Sends raw mulaw 8kHz audio chunks (as Buffers).
    * Calls onTranscript whenever a transcript event arrives.
+   * Calls onUtteranceEnd when Deepgram's VAD detects end-of-speech
+   * (much faster and more accurate than a fixed debounce timer).
    * Returns the WebSocket so the caller can send audio and close it.
    */
   startStreamingSession(
@@ -28,10 +33,15 @@ export class DeepgramService {
     onTranscript: TranscriptCallback,
     onError?: (err: Error) => void,
     onClose?: () => void,
-    endpointingMs?: number
+    endpointingMs?: number,
+    onUtteranceEnd?: UtteranceEndCallback
   ): WebSocket {
-    // Use agent's endpointing config with sensible floor/ceiling for Deepgram
-    const epMs = Math.max(500, Math.min(endpointingMs ?? 1500, 5000));
+    // Deepgram allows aggressive endpointing, but UtteranceEnd requires a
+    // minimum of 1000ms (server-side enforced — lower values return HTTP 400).
+    // Endpointing floor lowered 500→300ms so interim→final transitions fire
+    // faster, giving us a usable signal before UtteranceEnd.
+    const epMs = Math.max(300, Math.min(endpointingMs ?? 400, 5000));
+    const utteranceEndMs = Math.max(1000, Math.min(endpointingMs ?? 1000, 5000));
     const params = new URLSearchParams({
       encoding: "mulaw",
       sample_rate: "8000",
@@ -41,11 +51,29 @@ export class DeepgramService {
       interim_results: "true",
       endpointing: String(epMs),
       smart_format: "true",
-      utterance_end_ms: String(epMs)
+      utterance_end_ms: String(utteranceEndMs),
+      vad_events: "true"
     });
 
-    const ws = new WebSocket(`wss://api.deepgram.com/v1/listen?${params.toString()}`, {
+    const url = `wss://api.deepgram.com/v1/listen?${params.toString()}`;
+    console.log(
+      `[Deepgram] Connecting: ${url.replace(/Token [^ ]+/, "Token ***")} ` +
+      `(key starts with: ${apiKey.slice(0, 8)}..., endpointing=${epMs}, utterance_end_ms=${utteranceEndMs})`
+    );
+
+    const ws = new WebSocket(url, {
       headers: { Authorization: `Token ${apiKey}` }
+    });
+
+    ws.on("unexpected-response", (_request, response) => {
+      let body = "";
+      response.on("data", (chunk) => {
+        body += chunk.toString();
+      });
+      response.on("end", () => {
+        const details = body.trim() || response.statusMessage || "Unknown Deepgram error";
+        console.error(`[Deepgram] Unexpected response ${response.statusCode}: ${details}`);
+      });
     });
 
     ws.on("message", (data) => {
@@ -60,6 +88,13 @@ export class DeepgramService {
           if (transcript.trim()) {
             onTranscript(transcript.trim(), isFinal, speechFinal);
           }
+        }
+
+        // UtteranceEnd: Deepgram's VAD has detected the speaker stopped.
+        // This fires ~500-800ms after the last word — much faster than a
+        // fixed debounce timer and much more accurate.
+        if (result.type === "UtteranceEnd") {
+          onUtteranceEnd?.();
         }
       } catch {
         // silently ignore parse errors

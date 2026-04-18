@@ -7,7 +7,7 @@ import { seedEnvCredentialsForOrganization } from "../services/credentials/EnvCr
 
 export const aiCredentialRoutes = Router();
 
-const VALID_PROVIDERS = new Set(["openai", "cartesia", "elevenlabs", "deepgram", "gemini"]);
+const VALID_PROVIDERS = new Set(["openai", "groq", "cartesia", "elevenlabs", "deepgram", "gemini"]);
 
 // Config blob shape stored in credentialsEncrypted per provider
 export interface CredentialConfig {

@@ -76,6 +76,51 @@ export async function resolveOpenAiCredential(
 }
 
 /**
+ * Resolve Groq credential for an agent.
+ * Priority: agent.llmCredentialId → org default for groq → env.GROQ_API_KEY
+ */
+export async function resolveGroqCredential(
+  organizationId: string,
+  credentialId?: string | null
+): Promise<ResolvedCredential> {
+  let config = await loadCredentialFromDb(credentialId);
+  if (!config) config = await loadDefaultForProvider(organizationId, "groq");
+
+  if (config?.apiKey) {
+    return {
+      apiKey: config.apiKey,
+      defaultModel: config.defaultModel,
+      source: "database"
+    };
+  }
+
+  if (env.GROQ_API_KEY) {
+    return {
+      apiKey: env.GROQ_API_KEY,
+      defaultModel: env.GROQ_MODEL,
+      source: "env"
+    };
+  }
+
+  return { apiKey: "", source: "none" };
+}
+
+/**
+ * Resolve the LLM credential for an agent based on its provider config.
+ * Routes to OpenAI or Groq based on llmProvider.
+ */
+export async function resolveLlmCredential(
+  organizationId: string,
+  llmProvider: string,
+  credentialId?: string | null
+): Promise<ResolvedCredential> {
+  if (llmProvider === "groq") {
+    return resolveGroqCredential(organizationId, credentialId);
+  }
+  return resolveOpenAiCredential(organizationId, credentialId);
+}
+
+/**
  * Resolve Cartesia credential (used for both STT and TTS).
  * Priority: specific credentialId → org default for cartesia → env vars
  */
