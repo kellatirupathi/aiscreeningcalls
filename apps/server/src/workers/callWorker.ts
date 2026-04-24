@@ -1,15 +1,36 @@
 import { callQueue } from "../queues/callQueue.js";
 import { prisma } from "../db/prisma.js";
-import { createTelephonyProvider } from "../services/telephony/TelephonyFactory.js";
+import { createTelephonyProviderFromCredential } from "../services/telephony/TelephonyFactory.js";
 import { env } from "../config/env.js";
-import type { TelephonyProvider } from "@screening/shared";
 import { CartesiaTtsService } from "../services/tts/CartesiaTtsService.js";
 import { ElevenLabsService } from "../services/tts/ElevenLabsService.js";
+import { SarvamTtsService } from "../services/tts/SarvamTtsService.js";
 import { welcomeAudioCache } from "../websocket/WelcomeAudioCache.js";
-import { resolveTtsCredential } from "../services/credentials/CredentialResolver.js";
+import {
+  resolveTtsCredential,
+  resolveTelephonyCredential
+} from "../services/credentials/CredentialResolver.js";
 
 const cartesiaTtsService = new CartesiaTtsService();
 const elevenLabsService = new ElevenLabsService();
+const sarvamTtsService = new SarvamTtsService();
+
+// Map agent.language ("English"/"Hindi"/...) → Sarvam BCP-47 code.
+function sarvamLangCode(lang: string): string {
+  switch (lang?.toLowerCase()) {
+    case "hindi":    return "hi-IN";
+    case "tamil":    return "ta-IN";
+    case "telugu":   return "te-IN";
+    case "kannada":  return "kn-IN";
+    case "malayalam":return "ml-IN";
+    case "marathi":  return "mr-IN";
+    case "gujarati": return "gu-IN";
+    case "bengali":  return "bn-IN";
+    case "punjabi":  return "pa-IN";
+    case "odia":     return "od-IN";
+    default:         return "en-IN";
+  }
+}
 
 /**
  * Synthesize welcome audio for a call. Returns a Promise that resolves to the
@@ -30,28 +51,37 @@ async function synthesizeWelcome(agentId: string): Promise<Buffer | null> {
 
     if (!ttsCred.apiKey) return null;
 
+    const voiceId = agent.ttsVoiceId ?? ttsCred.defaultVoiceId ?? "";
+    if (!voiceId) return null;
+
     if (agent.ttsProvider === "cartesia") {
-      const voiceId = agent.ttsVoiceId ?? ttsCred.defaultVoiceId ?? "";
-      if (!voiceId) return null;
       return await cartesiaTtsService.synthesize(agent.welcomeMessage, {
         apiKey: ttsCred.apiKey,
         modelId: agent.ttsModel,
         voiceId,
         speedRate: agent.ttsSpeedRate
       });
-    } else {
-      const voiceId = agent.ttsVoiceId ?? ttsCred.defaultVoiceId ?? "";
-      if (!voiceId) return null;
-      return await elevenLabsService.synthesize(agent.welcomeMessage, {
-        voiceId,
-        modelId: agent.ttsModel,
+    }
+    if (agent.ttsProvider === "sarvam") {
+      return await sarvamTtsService.synthesize(agent.welcomeMessage, {
         apiKey: ttsCred.apiKey,
-        stability: agent.ttsStability,
-        similarityBoost: agent.ttsSimilarityBoost,
-        styleExaggeration: agent.ttsStyleExaggeration,
-        speedRate: agent.ttsSpeedRate
+        modelId: agent.ttsModel,
+        voiceId,
+        speedRate: agent.ttsSpeedRate,
+        sampleRate: agent.ttsSampleRate,
+        language: sarvamLangCode(agent.language)
       });
     }
+    // Default: ElevenLabs
+    return await elevenLabsService.synthesize(agent.welcomeMessage, {
+      voiceId,
+      modelId: agent.ttsModel,
+      apiKey: ttsCred.apiKey,
+      stability: agent.ttsStability,
+      similarityBoost: agent.ttsSimilarityBoost,
+      styleExaggeration: agent.ttsStyleExaggeration,
+      speedRate: agent.ttsSpeedRate
+    });
   } catch (err) {
     console.error(`[callWorker] Welcome synthesis failed for agent ${agentId}:`, (err as Error).message);
     return null;
@@ -95,9 +125,23 @@ callQueue.process(5, async (job) => {
     const wsUrl = env.SERVER_URL.replace(/^http/, "ws");
     const mediaStreamUrl = `${wsUrl}/ws/media/${callId}`;
 
+    // Resolve the telephony credential for this agent (DB first, env fallback).
+    // When the agent has a linked credential, its phone number overrides the
+    // job's `from` — unless the job explicitly supplied one (e.g. campaign).
+    const agent = await prisma.agent.findUnique({ where: { id: agentId } });
+    const telephonyCred = await resolveTelephonyCredential(
+      data.organizationId,
+      provider,
+      agent?.telephonyCredentialId ?? null
+    );
+    const fromNumber = from || telephonyCred.fromNumber || "";
+    if (!fromNumber) {
+      throw new Error(`No from-number available for ${provider} — configure one in Settings → Telephony.`);
+    }
+
     // Dial the candidate (runs concurrently with welcome synthesis above)
-    const telephonyProvider = createTelephonyProvider(provider as TelephonyProvider);
-    const result = await telephonyProvider.makeOutboundCall({ to, from, callId, mediaStreamUrl });
+    const telephonyProvider = createTelephonyProviderFromCredential(telephonyCred);
+    const result = await telephonyProvider.makeOutboundCall({ to, from: fromNumber, callId, mediaStreamUrl });
 
     // Store the provider's call ID for webhook correlation
     await prisma.call.update({
@@ -145,5 +189,12 @@ callQueue.on("failed", (job, err) => {
 });
 
 callQueue.on("error", (err) => {
-  console.error("[callQueue] Queue error:", err.message);
+  // Bull's Redis connection errors surface here. When Redis is down this
+  // fires every few hundred ms — include code/address to make it obvious.
+  const e = err as Error & { code?: string; address?: string; port?: number };
+  console.error(
+    `[callQueue] Queue error: ${e.message || "(no message)"}${
+      e.code ? ` [code=${e.code}]` : ""
+    }${e.address ? ` [target=${e.address}:${e.port}]` : ""}`
+  );
 });

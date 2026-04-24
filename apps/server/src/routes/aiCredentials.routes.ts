@@ -2,12 +2,11 @@ import { Router } from "express";
 import { prisma } from "../db/prisma.js";
 import { asyncHandler } from "../utils/asyncHandler.js";
 import { encryptJson, decryptJson } from "../utils/crypto.js";
-import { maskSecret } from "../utils/viewModels.js";
 import { seedEnvCredentialsForOrganization } from "../services/credentials/EnvCredentialSeeder.js";
 
 export const aiCredentialRoutes = Router();
 
-const VALID_PROVIDERS = new Set(["openai", "groq", "cartesia", "elevenlabs", "deepgram", "gemini"]);
+const VALID_PROVIDERS = new Set(["openai", "groq", "cartesia", "elevenlabs", "deepgram", "gemini", "sarvam"]);
 
 // Config blob shape stored in credentialsEncrypted per provider
 export interface CredentialConfig {
@@ -31,7 +30,8 @@ function toViewModel(c: { id: string; provider: string; name: string; isDefault:
     provider: c.provider,
     name: c.name,
     isDefault: c.isDefault,
-    apiKey: maskSecret(config.apiKey),
+    // Return full plaintext apiKey to the frontend for editing/viewing.
+    apiKey: config.apiKey ?? "",
     defaultModel: config.defaultModel ?? "",
     defaultVoiceId: config.defaultVoiceId ?? "",
     sttModel: config.sttModel ?? "",

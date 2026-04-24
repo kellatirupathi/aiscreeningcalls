@@ -20,11 +20,12 @@ const baseSttModels: Record<string, string[]> = {
   deepgram: ["nova-3", "nova-2"]
 };
 
-const ttsProviders = ["cartesia", "elevenlabs"];
-const ttsProviderLabels: Record<string, string> = { cartesia: "Cartesia", elevenlabs: "Elevenlabs" };
+const ttsProviders = ["cartesia", "elevenlabs", "sarvam"];
+const ttsProviderLabels: Record<string, string> = { cartesia: "Cartesia", elevenlabs: "Elevenlabs", sarvam: "Sarvam" };
 const baseTtsModels: Record<string, string[]> = {
   cartesia: ["sonic-2", "sonic-turbo"],
-  elevenlabs: ["eleven_turbo_v2_5", "eleven_multilingual_v2"]
+  elevenlabs: ["eleven_turbo_v2_5", "eleven_multilingual_v2"],
+  sarvam: ["bulbul:v2", "bulbul:v3"]
 };
 
 /** Merge hardcoded defaults with models configured on credentials.
@@ -80,7 +81,14 @@ export default function AudioTabView({ agent, onAgentChange }: AudioTabViewProps
   }
 
   function handleTtsProviderChange(provider: string) {
-    onAgentChange({ ttsProvider: provider, ttsModel: defaultTtsModel(provider) });
+    // Clear voice when switching providers — voice IDs are provider-specific
+    // (Cartesia UUIDs don't work on Sarvam, ElevenLabs IDs don't work on Cartesia).
+    // Falls back to the credential's defaultVoiceId / env fallback at call time.
+    onAgentChange({
+      ttsProvider: provider,
+      ttsModel: defaultTtsModel(provider),
+      ttsVoiceName: ""
+    });
   }
 
   return (
@@ -170,25 +178,58 @@ export default function AudioTabView({ agent, onAgentChange }: AudioTabViewProps
           </label>
           <label className="field">
             <span>Voice</span>
-            {voices.filter((v) => v.provider === normalizedTts).length > 0 ? (
-              <Select
-                value={agent.ttsVoiceName}
-                onChange={(event) => onAgentChange({ ttsVoiceName: event.target.value })}
-              >
-                <option value="">Select a voice...</option>
-                {voices
-                  .filter((v) => v.provider === normalizedTts)
-                  .map((v) => (
+            {(() => {
+              // Map agent.language ("English"/"Hindi") → BCP-47 short code ("en"/"hi")
+              const agentLangCode = agent.language?.toLowerCase() === "hindi" ? "hi" : "en";
+
+              // Extract Sarvam model (bulbul:v2 / bulbul:v3) from voice description.
+              // Only applied when the current TTS provider is sarvam.
+              const extractSarvamModel = (desc?: string | null): string | null => {
+                if (!desc) return null;
+                const m = desc.match(/bulbul:v(\d+)/i);
+                return m ? `bulbul:v${m[1]}` : null;
+              };
+
+              // Filter by provider → language → model (Sarvam only).
+              // Each filter falls back gracefully if it empties the list so the
+              // dropdown never goes blank when voices exist.
+              const providerVoices = voices.filter((v) => v.provider === normalizedTts);
+              const langMatched = providerVoices.filter((v) => v.language === agentLangCode);
+              const afterLang = langMatched.length > 0 ? langMatched : providerVoices;
+
+              let visibleVoices = afterLang;
+              if (normalizedTts === "sarvam" && agent.ttsModel) {
+                const modelMatched = afterLang.filter(
+                  (v) => extractSarvamModel(v.description) === agent.ttsModel
+                );
+                if (modelMatched.length > 0) visibleVoices = modelMatched;
+              }
+
+              return visibleVoices.length > 0 ? (
+                <Select
+                  value={agent.ttsVoiceName}
+                  onChange={(event) => onAgentChange({ ttsVoiceName: event.target.value })}
+                >
+                  <option value="">Select a voice...</option>
+                  {visibleVoices.map((v) => (
                     <option key={v.id} value={v.voiceId}>
-                      {v.name}{v.gender ? ` (${v.gender})` : ""}{v.language ? ` — ${v.language}` : ""}{v.isDefault ? " [Default]" : ""}
+                      {v.name}{v.gender ? ` (${v.gender})` : ""}{v.isDefault ? " [Default]" : ""}
                     </option>
                   ))}
-                <option value="__custom">Custom Voice ID...</option>
-              </Select>
-            ) : (
+                  <option value="__custom">Custom Voice ID...</option>
+                </Select>
+              ) : null;
+            })()}
+            {voices.filter((v) => v.provider === normalizedTts).length === 0 && (
               <Input
                 value={agent.ttsVoiceName}
-                placeholder={isCartesiaTts ? "Cartesia voice UUID" : "ElevenLabs voice ID"}
+                placeholder={
+                  isCartesiaTts
+                    ? "Cartesia voice UUID"
+                    : normalizedTts === "sarvam"
+                    ? "Sarvam speaker (e.g. anushka, meera, abhilash)"
+                    : "ElevenLabs voice ID"
+                }
                 onChange={(event) => onAgentChange({ ttsVoiceName: event.target.value })}
               />
             )}
@@ -239,6 +280,25 @@ export default function AudioTabView({ agent, onAgentChange }: AudioTabViewProps
               />
             </div>
           </div>
+
+          {normalizedTts === "sarvam" && (
+            <label className="field" style={{ gridColumn: "span 2" }}>
+              <span>Audio Quality</span>
+              <Select
+                value={String(agent.ttsSampleRate || 8000)}
+                onChange={(event) =>
+                  onAgentChange({ ttsSampleRate: Number(event.target.value) || 8000 })
+                }
+              >
+                <option value="8000">Telephony (8 kHz) — optimized for phone calls</option>
+                <option value="22050">Standard (22.05 kHz) — balanced quality</option>
+                <option value="48000">High Quality (48 kHz) — bulbul:v3 only</option>
+              </Select>
+              <small style={{ color: "#94a3b8", fontSize: 11 }}>
+                Plivo delivers at 8 kHz regardless; higher rates use Sarvam's premium model and are downsampled for delivery.
+              </small>
+            </label>
+          )}
 
           <label className="field" style={{ gridColumn: "span 2" }}>
             <span>API Credential</span>

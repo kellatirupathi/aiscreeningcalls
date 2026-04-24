@@ -1,0 +1,1 @@
+- [Telephony credentials refactor](project_telephony_credentials_refactor.md) — Plivo/Exotel moving from env-var to multi-credential DB pattern mirroring AiCredential

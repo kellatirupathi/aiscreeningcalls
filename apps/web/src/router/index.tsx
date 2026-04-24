@@ -14,6 +14,7 @@ import BatchDetailPage from "@/pages/batches/BatchDetailPage";
 import CallHistoryPage from "@/pages/calls/CallHistoryPage";
 import RatingsPage from "@/pages/ratings/RatingsPage";
 import DocumentationPage from "@/pages/documentation/DocumentationPage";
+import PricingPage from "@/pages/documentation/PricingPage";
 import NumbersPage from "@/pages/numbers/NumbersPage";
 import SettingsPage from "@/pages/settings/SettingsPage";
 import NotFoundPage from "@/pages/NotFoundPage";
@@ -73,7 +74,8 @@ export const router = createBrowserRouter([
   {
     element: <ProtectedRoutes withLayout={false} />,
     children: [
-      { path: "/documentation", element: <RoleGuard allowedRoles={["admin", "manager", "recruiter", "viewer"]}><DocumentationPage /></RoleGuard> }
+      { path: "/documentation", element: <RoleGuard allowedRoles={["admin", "manager", "recruiter", "viewer"]}><DocumentationPage /></RoleGuard> },
+      { path: "/documentation/pricing-cost", element: <RoleGuard allowedRoles={["admin", "manager", "recruiter", "viewer"]}><PricingPage /></RoleGuard> }
     ]
   },
   {

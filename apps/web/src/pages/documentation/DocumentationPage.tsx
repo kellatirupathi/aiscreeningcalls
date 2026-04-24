@@ -3,7 +3,7 @@ import {
   Bot, Database, Gauge, Mic, Network, PhoneForwarded, Settings2,
   ShieldCheck, Workflow, BookOpen, Rocket, Server, Users, Phone,
   Code, Terminal, AlertTriangle, CheckCircle, ChevronRight, Hash,
-  Zap, ArrowRight
+  Zap, ArrowRight, IndianRupee
 } from "lucide-react";
 import { Link } from "react-router-dom";
 import { Card } from "@/components/ui/Card";
@@ -21,9 +21,11 @@ const sections = [
   { id: "data-model", label: "Data Model", icon: Database },
   { id: "roles", label: "Roles & Access", icon: Users },
   { id: "environment", label: "Environment", icon: Terminal },
+  { id: "pricing", label: "Pricing & Costs", icon: IndianRupee },
   { id: "deployment", label: "Deployment", icon: Workflow },
   { id: "troubleshooting", label: "Troubleshooting", icon: AlertTriangle }
 ];
+
 
 const quickLinks = [
   { title: "Agent Builder", desc: "Configure AI agents with prompts, voice, and call behavior.", href: "/agents", icon: Bot },
@@ -130,16 +132,27 @@ export default function DocumentationPage() {
         </div>
 
         <nav className="doc__nav">
-          {sections.map(({ id, label, icon: Icon }) => (
-            <button
-              key={id}
-              className={`doc__nav-item ${activeSection === id ? "doc__nav-item--active" : ""}`}
-              onClick={() => scrollTo(id)}
-            >
-              <Icon size={15} />
-              <span>{label}</span>
-            </button>
-          ))}
+          {sections.map(({ id, label, icon: Icon }) =>
+            id === "pricing" ? (
+              <Link
+                key={id}
+                to="/documentation/pricing-cost"
+                className="doc__nav-item"
+              >
+                <Icon size={15} />
+                <span>{label}</span>
+              </Link>
+            ) : (
+              <button
+                key={id}
+                className={`doc__nav-item ${activeSection === id ? "doc__nav-item--active" : ""}`}
+                onClick={() => scrollTo(id)}
+              >
+                <Icon size={15} />
+                <span>{label}</span>
+              </button>
+            )
+          )}
         </nav>
 
         <div className="doc__nav-footer">

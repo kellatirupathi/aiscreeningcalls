@@ -4,78 +4,76 @@ import { Button } from "@/components/ui/Button";
 import { Card } from "@/components/ui/Card";
 import { Input } from "@/components/ui/Input";
 import {
-  useAiCredentials,
-  useCreateAiCredential,
-  useUpdateAiCredential,
-  useDeleteAiCredential,
-  useSetDefaultAiCredential,
-  type AiProvider,
-  type AiCredential
-} from "@/hooks/useAiCredentials";
+  useTelephonyCredentials,
+  useCreateTelephonyCredential,
+  useUpdateTelephonyCredential,
+  useDeleteTelephonyCredential,
+  useSetDefaultTelephonyCredential,
+  type TelephonyProviderId,
+  type TelephonyCredential
+} from "@/hooks/useTelephonyCredentials";
 
-const PROVIDERS: { id: AiProvider; label: string; description: string }[] = [
-  { id: "openai", label: "OpenAI", description: "LLM for agent responses (GPT-4o-mini, GPT-4o, etc.)" },
-  { id: "groq", label: "Groq", description: "Low-latency LLM (llama-3.1-8b-instant, llama-3.3-70b-versatile, etc.)" },
-  { id: "cartesia", label: "Cartesia", description: "STT (ink-whisper) + TTS (sonic-2)" },
-  { id: "elevenlabs", label: "ElevenLabs", description: "TTS with premium voices" },
-  { id: "deepgram", label: "Deepgram", description: "STT (nova-3, nova-2)" },
-  { id: "gemini", label: "Gemini", description: "Speech-to-speech end-to-end model" },
-  { id: "sarvam", label: "Sarvam", description: "TTS optimized for Indian languages (bulbul:v2, bulbul:v3)" }
+const PROVIDERS: { id: TelephonyProviderId; label: string; description: string }[] = [
+  { id: "plivo", label: "Plivo", description: "Add one or more Plivo accounts. Each account has its own phone number." },
+  { id: "exotel", label: "Exotel", description: "Add one or more Exotel accounts. Each account has its own phone number." }
 ];
 
 interface FormData {
-  provider: AiProvider;
+  provider: TelephonyProviderId;
   name: string;
+  phoneNumber: string;
+  authId: string;
+  authToken: string;
+  accountSid: string;
   apiKey: string;
-  defaultModel: string;
-  defaultVoiceId: string;
-  sttModel: string;
-  ttsModel: string;
-  defaultVoice: string;
-  modelId: string;
+  apiToken: string;
+  subdomain: string;
+  appId: string;
   isDefault: boolean;
 }
 
 const EMPTY_FORM: FormData = {
-  provider: "openai",
+  provider: "plivo",
   name: "",
+  phoneNumber: "",
+  authId: "",
+  authToken: "",
+  accountSid: "",
   apiKey: "",
-  defaultModel: "",
-  defaultVoiceId: "",
-  sttModel: "",
-  ttsModel: "",
-  defaultVoice: "",
-  modelId: "",
+  apiToken: "",
+  subdomain: "api",
+  appId: "",
   isDefault: false
 };
 
-export function AiCredentialsManager() {
-  const { data: credentials = [], isLoading } = useAiCredentials();
-  const createMutation = useCreateAiCredential();
-  const deleteMutation = useDeleteAiCredential();
-  const setDefaultMutation = useSetDefaultAiCredential();
+export function TelephonyCredentialsManager() {
+  const { data: credentials = [], isLoading } = useTelephonyCredentials();
+  const createMutation = useCreateTelephonyCredential();
+  const deleteMutation = useDeleteTelephonyCredential();
+  const setDefaultMutation = useSetDefaultTelephonyCredential();
 
   const [editingForm, setEditingForm] = useState<FormData | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
 
-  const updateMutation = useUpdateAiCredential(editingId ?? "");
+  const updateMutation = useUpdateTelephonyCredential(editingId ?? "");
 
-  function startNewCredential(provider: AiProvider) {
+  function startNewCredential(provider: TelephonyProviderId) {
     setEditingForm({ ...EMPTY_FORM, provider });
     setEditingId(null);
   }
 
-  function startEdit(credential: AiCredential) {
+  function startEdit(credential: TelephonyCredential) {
     setEditingForm({
       provider: credential.provider,
       name: credential.name,
+      phoneNumber: credential.phoneNumber,
+      authId: credential.authId,
+      authToken: credential.authToken,
+      accountSid: credential.accountSid,
       apiKey: credential.apiKey,
-      defaultModel: credential.defaultModel,
-      defaultVoiceId: credential.defaultVoiceId,
-      sttModel: credential.sttModel,
-      ttsModel: credential.ttsModel,
-      defaultVoice: credential.defaultVoice,
-      modelId: credential.modelId,
+      apiToken: credential.apiToken,
+      subdomain: credential.subdomain || "api",
+      appId: credential.appId,
       isDefault: credential.isDefault
     });
     setEditingId(credential.id);
@@ -92,36 +90,53 @@ export function AiCredentialsManager() {
       window.alert("Please enter a name.");
       return;
     }
-    if (!editingId && !editingForm.apiKey.trim()) {
-      window.alert("Please enter an API key.");
+    if (!editingForm.phoneNumber.trim()) {
+      window.alert("Please enter a phone number.");
       return;
+    }
+
+    if (editingForm.provider === "plivo") {
+      if (!editingId && (!editingForm.authId.trim() || !editingForm.authToken.trim())) {
+        window.alert("Auth ID and Auth Token are required.");
+        return;
+      }
+    } else {
+      if (!editingId && (!editingForm.accountSid.trim() || !editingForm.apiKey.trim() || !editingForm.apiToken.trim())) {
+        window.alert("Account SID, API Key, and API Token are required.");
+        return;
+      }
     }
 
     try {
       if (editingId) {
         const payload: Record<string, unknown> = {
           name: editingForm.name,
-          defaultModel: editingForm.defaultModel,
-          defaultVoiceId: editingForm.defaultVoiceId,
-          sttModel: editingForm.sttModel,
-          ttsModel: editingForm.ttsModel,
-          defaultVoice: editingForm.defaultVoice,
-          modelId: editingForm.modelId,
+          phoneNumber: editingForm.phoneNumber,
           isDefault: editingForm.isDefault
         };
-        if (editingForm.apiKey.trim()) payload.apiKey = editingForm.apiKey;
+        if (editingForm.provider === "plivo") {
+          if (editingForm.authId.trim()) payload.authId = editingForm.authId;
+          if (editingForm.authToken.trim()) payload.authToken = editingForm.authToken;
+        } else {
+          payload.accountSid = editingForm.accountSid;
+          payload.apiKey = editingForm.apiKey;
+          payload.apiToken = editingForm.apiToken;
+          payload.subdomain = editingForm.subdomain;
+          payload.appId = editingForm.appId;
+        }
         await updateMutation.mutateAsync(payload);
       } else {
         await createMutation.mutateAsync({
           provider: editingForm.provider,
           name: editingForm.name,
-          apiKey: editingForm.apiKey,
-          defaultModel: editingForm.defaultModel || undefined,
-          defaultVoiceId: editingForm.defaultVoiceId || undefined,
-          sttModel: editingForm.sttModel || undefined,
-          ttsModel: editingForm.ttsModel || undefined,
-          defaultVoice: editingForm.defaultVoice || undefined,
-          modelId: editingForm.modelId || undefined,
+          phoneNumber: editingForm.phoneNumber,
+          authId: editingForm.authId || undefined,
+          authToken: editingForm.authToken || undefined,
+          accountSid: editingForm.accountSid || undefined,
+          apiKey: editingForm.apiKey || undefined,
+          apiToken: editingForm.apiToken || undefined,
+          subdomain: editingForm.subdomain || undefined,
+          appId: editingForm.appId || undefined,
           isDefault: editingForm.isDefault
         });
       }
@@ -132,7 +147,7 @@ export function AiCredentialsManager() {
     }
   }
 
-  async function handleDelete(credential: AiCredential) {
+  async function handleDelete(credential: TelephonyCredential) {
     if (!window.confirm(`Delete credential "${credential.name}"?`)) return;
     try {
       await deleteMutation.mutateAsync(credential.id);
@@ -142,15 +157,15 @@ export function AiCredentialsManager() {
     }
   }
 
-  async function handleSetDefault(credential: AiCredential) {
+  async function handleSetDefault(credential: TelephonyCredential) {
     try {
       await setDefaultMutation.mutateAsync(credential.id);
-    } catch (err) {
+    } catch {
       window.alert("Failed to set as default.");
     }
   }
 
-  if (isLoading) return <div>Loading credentials...</div>;
+  if (isLoading) return <div>Loading telephony credentials...</div>;
 
   return (
     <div className="tab-stack">
@@ -171,7 +186,7 @@ export function AiCredentialsManager() {
 
             {providerCreds.length === 0 ? (
               <div style={{ padding: "20px", textAlign: "center", color: "#94a3b8", fontSize: 14 }}>
-                No {provider.label} credentials added yet. Click "Add New" to create one.
+                No {provider.label} accounts added yet. Click "Add New" to create one.
               </div>
             ) : (
               <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
@@ -198,23 +213,21 @@ export function AiCredentialsManager() {
                         )}
                       </div>
                       <div style={{ fontSize: 12, color: "#64748b", marginTop: 4 }}>
-                        API Key: {cred.apiKey || "(not set)"}
-                        {cred.defaultModel && ` · Model: ${cred.defaultModel}`}
-                        {cred.defaultVoiceId && ` · Voice: ${cred.defaultVoiceId}`}
-                        {cred.sttModel && ` · STT: ${cred.sttModel}`}
-                        {cred.ttsModel && ` · TTS: ${cred.ttsModel}`}
+                        Number: {cred.phoneNumber || "(not set)"}
+                        {cred.provider === "plivo" && cred.authId && ` · Auth ID: ${cred.authId.slice(0, 8)}...`}
+                        {cred.provider === "exotel" && cred.accountSid && ` · SID: ${cred.accountSid.slice(0, 12)}...`}
                       </div>
                     </div>
                     <div style={{ display: "flex", gap: 6 }}>
                       {!cred.isDefault && (
-                        <Button onClick={() => handleSetDefault(cred)} style={{ padding: "4px 8px" }}>
+                        <Button onClick={() => handleSetDefault(cred)} style={{ padding: "4px 8px" }} title="Set as default">
                           <Star size={14} />
                         </Button>
                       )}
-                      <Button onClick={() => startEdit(cred)} style={{ padding: "4px 8px" }}>
+                      <Button onClick={() => startEdit(cred)} style={{ padding: "4px 8px" }} title="Edit">
                         <Edit2 size={14} />
                       </Button>
-                      <Button onClick={() => handleDelete(cred)} style={{ padding: "4px 8px" }}>
+                      <Button onClick={() => handleDelete(cred)} style={{ padding: "4px 8px" }} title="Delete">
                         <Trash2 size={14} />
                       </Button>
                     </div>
@@ -247,7 +260,7 @@ export function AiCredentialsManager() {
           >
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
               <div className="section-title" style={{ marginBottom: 0 }}>
-                {editingId ? "Edit" : "Add"} {PROVIDERS.find((p) => p.id === editingForm.provider)?.label} Credential
+                {editingId ? "Edit" : "Add"} {PROVIDERS.find((p) => p.id === editingForm.provider)?.label} Account
               </div>
               <Button onClick={cancelEdit} style={{ padding: "4px 8px" }}>
                 <X size={14} />
@@ -256,124 +269,79 @@ export function AiCredentialsManager() {
 
             <div className="form-grid form-grid--2">
               <label className="field">
-                <span>Name *</span>
+                <span>Account Label *</span>
                 <Input
                   value={editingForm.name}
                   onChange={(e) => setEditingForm({ ...editingForm, name: e.target.value })}
-                  placeholder="e.g., Production Key, Client A"
+                  placeholder="e.g., Sales Team, India Support"
                 />
               </label>
               <label className="field">
-                <span>API Key *</span>
+                <span>Phone Number *</span>
                 <Input
-                  value={editingForm.apiKey}
-                  onChange={(e) => setEditingForm({ ...editingForm, apiKey: e.target.value })}
-                  placeholder="sk-..."
+                  value={editingForm.phoneNumber}
+                  onChange={(e) => setEditingForm({ ...editingForm, phoneNumber: e.target.value })}
+                  placeholder="+1XXXXXXXXXX"
                 />
               </label>
 
-              {(editingForm.provider === "openai" || editingForm.provider === "groq" || editingForm.provider === "deepgram") && (
-                <label className="field" style={{ gridColumn: "span 2" }}>
-                  <span>Default Model</span>
-                  <Input
-                    value={editingForm.defaultModel}
-                    onChange={(e) => setEditingForm({ ...editingForm, defaultModel: e.target.value })}
-                    placeholder={
-                      editingForm.provider === "openai"
-                        ? "gpt-4o-mini"
-                        : editingForm.provider === "groq"
-                        ? "llama-3.1-8b-instant"
-                        : "nova-3"
-                    }
-                  />
-                </label>
-              )}
-
-              {editingForm.provider === "cartesia" && (
+              {editingForm.provider === "plivo" && (
                 <>
                   <label className="field">
-                    <span>Default Voice ID</span>
+                    <span>Auth ID {editingId ? "" : "*"}</span>
                     <Input
-                      value={editingForm.defaultVoiceId}
-                      onChange={(e) => setEditingForm({ ...editingForm, defaultVoiceId: e.target.value })}
+                      value={editingForm.authId}
+                      onChange={(e) => setEditingForm({ ...editingForm, authId: e.target.value })}
+                      placeholder={editingId ? "Leave blank to keep existing" : "MAXXXXXXXXXXXXXXX"}
                     />
                   </label>
                   <label className="field">
-                    <span>STT Model</span>
+                    <span>Auth Token {editingId ? "" : "*"}</span>
                     <Input
-                      value={editingForm.sttModel}
-                      onChange={(e) => setEditingForm({ ...editingForm, sttModel: e.target.value })}
-                      placeholder="ink-whisper"
-                    />
-                  </label>
-                  <label className="field">
-                    <span>TTS Model</span>
-                    <Input
-                      value={editingForm.ttsModel}
-                      onChange={(e) => setEditingForm({ ...editingForm, ttsModel: e.target.value })}
-                      placeholder="sonic-2"
+                      value={editingForm.authToken}
+                      onChange={(e) => setEditingForm({ ...editingForm, authToken: e.target.value })}
+                      placeholder={editingId ? "Leave blank to keep existing" : ""}
                     />
                   </label>
                 </>
               )}
 
-              {editingForm.provider === "elevenlabs" && (
+              {editingForm.provider === "exotel" && (
                 <>
                   <label className="field">
-                    <span>Default Voice ID</span>
+                    <span>Account SID *</span>
                     <Input
-                      value={editingForm.defaultVoiceId}
-                      onChange={(e) => setEditingForm({ ...editingForm, defaultVoiceId: e.target.value })}
+                      value={editingForm.accountSid}
+                      onChange={(e) => setEditingForm({ ...editingForm, accountSid: e.target.value })}
                     />
                   </label>
                   <label className="field">
-                    <span>Model ID</span>
+                    <span>API Key *</span>
                     <Input
-                      value={editingForm.modelId}
-                      onChange={(e) => setEditingForm({ ...editingForm, modelId: e.target.value })}
-                      placeholder="eleven_turbo_v2_5"
-                    />
-                  </label>
-                </>
-              )}
-
-              {editingForm.provider === "sarvam" && (
-                <>
-                  <label className="field">
-                    <span>Default Speaker</span>
-                    <Input
-                      value={editingForm.defaultVoiceId}
-                      onChange={(e) => setEditingForm({ ...editingForm, defaultVoiceId: e.target.value })}
-                      placeholder="anushka"
+                      value={editingForm.apiKey}
+                      onChange={(e) => setEditingForm({ ...editingForm, apiKey: e.target.value })}
                     />
                   </label>
                   <label className="field">
-                    <span>TTS Model</span>
+                    <span>API Token *</span>
                     <Input
-                      value={editingForm.ttsModel}
-                      onChange={(e) => setEditingForm({ ...editingForm, ttsModel: e.target.value })}
-                      placeholder="bulbul:v2"
-                    />
-                  </label>
-                </>
-              )}
-
-              {editingForm.provider === "gemini" && (
-                <>
-                  <label className="field">
-                    <span>Default Model</span>
-                    <Input
-                      value={editingForm.defaultModel}
-                      onChange={(e) => setEditingForm({ ...editingForm, defaultModel: e.target.value })}
-                      placeholder="gemini-2.0-flash-live-001"
+                      value={editingForm.apiToken}
+                      onChange={(e) => setEditingForm({ ...editingForm, apiToken: e.target.value })}
                     />
                   </label>
                   <label className="field">
-                    <span>Default Voice</span>
+                    <span>Subdomain</span>
                     <Input
-                      value={editingForm.defaultVoice}
-                      onChange={(e) => setEditingForm({ ...editingForm, defaultVoice: e.target.value })}
-                      placeholder="Kore"
+                      value={editingForm.subdomain}
+                      onChange={(e) => setEditingForm({ ...editingForm, subdomain: e.target.value })}
+                      placeholder="api"
+                    />
+                  </label>
+                  <label className="field" style={{ gridColumn: "span 2" }}>
+                    <span>App ID</span>
+                    <Input
+                      value={editingForm.appId}
+                      onChange={(e) => setEditingForm({ ...editingForm, appId: e.target.value })}
                     />
                   </label>
                 </>

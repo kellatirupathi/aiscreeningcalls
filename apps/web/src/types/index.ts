@@ -34,6 +34,7 @@ export interface AgentRecord {
   geminiModel: string;
   geminiVoice: string;
   telephonyProvider: TelephonyProvider;
+  telephonyCredentialId: string;
   costPerMinute?: string;
   welcomeMessage: string;
   prompt: string;
@@ -54,6 +55,7 @@ export interface AgentRecord {
   geminiCredentialId: string;
   ttsBufferSize: number;
   ttsSpeedRate: number;
+  ttsSampleRate: number;
   ttsSimilarityBoost: number;
   ttsStability: number;
   ttsStyleExaggeration: number;

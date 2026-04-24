@@ -115,6 +115,7 @@ function buildAgentCreateInput(payload: Record<string, unknown>) {
     ttsVoiceId: readNullableString(payload.ttsVoiceName ?? payload.ttsVoiceId) ?? env.CARTESIA_DEFAULT_VOICE_ID ?? null,
     ttsBufferSize: Math.max(0, Math.round(readNumber(payload.ttsBufferSize, 200))),
     ttsSpeedRate: readNumber(payload.ttsSpeedRate, 1),
+    ttsSampleRate: Math.max(8000, Math.round(readNumber(payload.ttsSampleRate, 8000))),
     ttsSimilarityBoost: readNumber(payload.ttsSimilarityBoost, 0.75),
     ttsStability: readNumber(payload.ttsStability, 0.5),
     ttsStyleExaggeration: readNumber(payload.ttsStyleExaggeration, 0),
@@ -122,6 +123,7 @@ function buildAgentCreateInput(payload: Record<string, unknown>) {
     interruptAfterWords: Math.max(0, Math.round(readNumber(payload.interruptAfterWords, 2))),
     responseRate: readTrimmedString(payload.responseRate, "Balanced"),
     telephonyProvider: readProvider(payload.telephonyProvider, "plivo", TELEPHONY_PROVIDERS),
+    telephonyCredentialId: readNullableString(payload.telephonyCredentialId) ?? null,
     endpointingMs: Math.max(0, Math.round(readNumber(payload.endpointingMs, 100))),
     linearDelayMs: Math.max(0, Math.round(readNumber(payload.linearDelayMs, 200))),
     userOnlineDetection: readBoolean(payload.userOnlineDetection, false),
@@ -193,6 +195,7 @@ function buildAgentUpdateInput(payload: Record<string, unknown>): Record<string,
   if (has("geminiCredentialId")) update.geminiCredentialId = readNullableString(payload.geminiCredentialId);
   if (has("ttsBufferSize")) update.ttsBufferSize = Math.max(0, Math.round(readNumber(payload.ttsBufferSize, 200)));
   if (has("ttsSpeedRate")) update.ttsSpeedRate = readNumber(payload.ttsSpeedRate, 1);
+  if (has("ttsSampleRate")) update.ttsSampleRate = Math.max(8000, Math.round(readNumber(payload.ttsSampleRate, 8000)));
   if (has("ttsSimilarityBoost")) update.ttsSimilarityBoost = readNumber(payload.ttsSimilarityBoost, 0.75);
   if (has("ttsStability")) update.ttsStability = readNumber(payload.ttsStability, 0.5);
   if (has("ttsStyleExaggeration")) update.ttsStyleExaggeration = readNumber(payload.ttsStyleExaggeration, 0);
@@ -204,6 +207,7 @@ function buildAgentUpdateInput(payload: Record<string, unknown>): Record<string,
   if (has("telephonyProvider")) {
     update.telephonyProvider = readProvider(payload.telephonyProvider, "plivo", TELEPHONY_PROVIDERS);
   }
+  if (has("telephonyCredentialId")) update.telephonyCredentialId = readNullableString(payload.telephonyCredentialId);
   if (has("endpointingMs")) update.endpointingMs = Math.max(0, Math.round(readNumber(payload.endpointingMs, 100)));
   if (has("linearDelayMs")) update.linearDelayMs = Math.max(0, Math.round(readNumber(payload.linearDelayMs, 200)));
   if (has("userOnlineDetection")) update.userOnlineDetection = readBoolean(payload.userOnlineDetection, false);
@@ -304,10 +308,29 @@ agentRoutes.patch(
       return;
     }
 
-    const agent = await prisma.agent.update({
-      where: { id: agentId },
-      data: updateData
-    });
+    // MongoDB Atlas rejects update pipelines over 50 stages. When the full
+    // agent is sent from the UI, the update can exceed that limit, so split
+    // it into chunks of 40 and apply sequentially. Each chunk is a separate
+    // prisma.agent.update call; MongoDB's own atomic guarantees only apply
+    // per-call, but no other writer mutates agents, so this is safe here.
+    const MAX_FIELDS_PER_UPDATE = 40;
+    const entries = Object.entries(updateData);
+    let agent = existingAgent;
+
+    if (entries.length <= MAX_FIELDS_PER_UPDATE) {
+      agent = await prisma.agent.update({
+        where: { id: agentId },
+        data: updateData
+      });
+    } else {
+      for (let i = 0; i < entries.length; i += MAX_FIELDS_PER_UPDATE) {
+        const chunk = Object.fromEntries(entries.slice(i, i + MAX_FIELDS_PER_UPDATE));
+        agent = await prisma.agent.update({
+          where: { id: agentId },
+          data: chunk
+        });
+      }
+    }
 
     res.json(mapAgent(agent));
   })
@@ -386,7 +409,14 @@ agentRoutes.post(
       systemPrompt?: string;
     };
 
-    if (!env.OPENAI_API_KEY) {
+    // Chat with agent ALWAYS uses OpenAI — independent of the agent's LLM
+    // provider (which may be Groq). Resolve OpenAI from the org's default
+    // openai credential, falling back to env.OPENAI_API_KEY.
+    const { resolveOpenAiCredential } = await import("../services/credentials/CredentialResolver.js");
+    const cred = await resolveOpenAiCredential(req.auth!.organizationId, null);
+    const apiKey = cred.apiKey || env.OPENAI_API_KEY;
+
+    if (!apiKey) {
       res.status(400).json({ message: "OpenAI API key is not configured." });
       return;
     }
@@ -399,12 +429,17 @@ agentRoutes.post(
       content: m.content
     }));
 
+    // Use an OpenAI model — agent.llmModel may be a Groq-only model
+    // (e.g. llama-3.1-8b-instant) that would 404 on OpenAI's API.
+    const model = cred.defaultModel || env.OPENAI_MODEL || "gpt-4o-mini";
+
     const reply = await openai.generateNextTurn(
       prompt,
       history,
-      agent.llmModel,
+      model,
       agent.llmTemperature,
-      agent.llmMaxTokens
+      agent.llmMaxTokens,
+      apiKey
     );
 
     res.json({ reply });
@@ -433,19 +468,32 @@ agentRoutes.post(
       return;
     }
 
-    // Find a from-number for this agent's telephony provider
-    const fromNumber = await prisma.phoneNumber.findFirst({
-      where: {
-        organizationId: req.auth!.organizationId,
-        provider: agent.telephonyProvider,
-        isActive: true
-      },
-      orderBy: { isDefaultOutbound: "desc" }
-    });
+    // Pick a from-number: agent's telephony credential → org default credential
+    // → legacy PhoneNumber record → error.
+    const { resolveTelephonyCredential } = await import("../services/credentials/CredentialResolver.js");
+    const telCred = await resolveTelephonyCredential(
+      req.auth!.organizationId,
+      agent.telephonyProvider,
+      agent.telephonyCredentialId
+    );
 
-    if (!fromNumber) {
+    let fromPhone = telCred.fromNumber ?? "";
+
+    if (!fromPhone) {
+      const legacyNumber = await prisma.phoneNumber.findFirst({
+        where: {
+          organizationId: req.auth!.organizationId,
+          provider: agent.telephonyProvider,
+          isActive: true
+        },
+        orderBy: { isDefaultOutbound: "desc" }
+      });
+      fromPhone = legacyNumber?.phoneNumber ?? "";
+    }
+
+    if (!fromPhone) {
       res.status(400).json({
-        message: `No active ${agent.telephonyProvider} phone number found. Add one in My Numbers first.`
+        message: `No ${agent.telephonyProvider} phone number found. Add a ${agent.telephonyProvider} account in Settings → Providers.`
       });
       return;
     }
@@ -468,7 +516,7 @@ agentRoutes.post(
       organizationId: req.auth!.organizationId,
       agentId: agent.id,
       to: phoneNumber,
-      from: fromNumber.phoneNumber,
+      from: fromPhone,
       provider: agent.telephonyProvider
     };
 

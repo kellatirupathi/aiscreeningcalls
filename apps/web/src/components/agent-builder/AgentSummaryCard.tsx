@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Copy, Check, Share2, Cpu } from "lucide-react";
 import { Button } from "@/components/ui/Button";
+import { useTelephonyCredentials } from "@/hooks/useTelephonyCredentials";
 import type { AgentRecord } from "@/types";
 
 interface AgentSummaryCardProps {
@@ -13,6 +14,15 @@ interface AgentSummaryCardProps {
 export function AgentSummaryCard({ agent, onAgentChange, onCopyId, onShare }: AgentSummaryCardProps) {
   const [idCopied, setIdCopied] = useState(false);
   const [shareCopied, setShareCopied] = useState(false);
+  const { data: telephonyCreds = [] } = useTelephonyCredentials(agent.telephonyProvider);
+  const activeCred =
+    telephonyCreds.find((c) => c.id === agent.telephonyCredentialId) ??
+    telephonyCreds.find((c) => c.isDefault) ??
+    null;
+  const providerLabel = agent.telephonyProvider === "plivo" ? "Plivo" : "Exotel";
+  const telephonyChip = activeCred
+    ? `${providerLabel} · ${activeCred.name} (${activeCred.phoneNumber})`
+    : providerLabel;
 
   function handleCopyId() {
     onCopyId();
@@ -48,7 +58,7 @@ export function AgentSummaryCard({ agent, onAgentChange, onCopyId, onShare }: Ag
       <div className="ab-summary__chips">
         <div className="ab-summary__chip ab-summary__chip--provider">
           <Cpu size={13} />
-          <span>{agent.telephonyProvider === "plivo" ? "Plivo" : "Exotel"}</span>
+          <span>{telephonyChip}</span>
         </div>
         <div className="ab-summary__chip">
           <span>{agent.llmProvider} / {agent.llmModel}</span>

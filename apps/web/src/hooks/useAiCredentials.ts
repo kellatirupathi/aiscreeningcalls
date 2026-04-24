@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 
-export type AiProvider = "openai" | "groq" | "cartesia" | "elevenlabs" | "deepgram" | "gemini";
+export type AiProvider = "openai" | "groq" | "cartesia" | "elevenlabs" | "deepgram" | "gemini" | "sarvam";
 
 export interface AiCredential {
   id: string;

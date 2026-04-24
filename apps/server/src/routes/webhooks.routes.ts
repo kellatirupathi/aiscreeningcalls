@@ -3,8 +3,8 @@ import { prisma } from "../db/prisma.js";
 import { asyncHandler } from "../utils/asyncHandler.js";
 import { env } from "../config/env.js";
 import { S3StorageService } from "../services/storage/S3StorageService.js";
-import { createTelephonyProvider } from "../services/telephony/TelephonyFactory.js";
-import type { TelephonyProvider } from "@screening/shared";
+import { createTelephonyProviderFromCredential } from "../services/telephony/TelephonyFactory.js";
+import { resolveTelephonyCredential } from "../services/credentials/CredentialResolver.js";
 
 export const webhookRoutes = Router();
 const s3 = new S3StorageService();
@@ -215,7 +215,13 @@ webhookRoutes.post(
     if (normalizedStatus === "completed" && call.telephonyProvider === "exotel") {
       void (async () => {
         try {
-          const provider = createTelephonyProvider(call.telephonyProvider as TelephonyProvider);
+          const agent = call.agentId ? await prisma.agent.findUnique({ where: { id: call.agentId } }) : null;
+          const cred = await resolveTelephonyCredential(
+            call.organizationId,
+            call.telephonyProvider,
+            agent?.telephonyCredentialId ?? null
+          );
+          const provider = createTelephonyProviderFromCredential(cred);
           const { recordingUrl } = await provider.fetchRecording(providerCallId ?? "");
           if (recordingUrl) {
             let finalUrl = recordingUrl;

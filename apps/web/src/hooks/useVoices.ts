@@ -36,6 +36,29 @@ export function useCreateVoice() {
   });
 }
 
+export interface UpdateVoicePayload {
+  name?: string;
+  voiceId?: string;
+  language?: string;
+  gender?: string | null;
+  description?: string | null;
+  isDefault?: boolean;
+}
+
+export function useUpdateVoice() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async ({ id, payload }: { id: string; payload: UpdateVoicePayload }) => {
+      const response = await api.patch<VoiceRecord>(`/voices/${id}`, payload);
+      return response.data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["voices"] });
+    }
+  });
+}
+
 export function useDeleteVoice() {
   const queryClient = useQueryClient();
 

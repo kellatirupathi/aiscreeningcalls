@@ -1,9 +1,11 @@
+import { useEffect } from "react";
 import { Input } from "@/components/ui/Input";
 import { Select } from "@/components/ui/Select";
 import { Slider } from "@/components/ui/Slider";
 import { Toggle } from "@/components/ui/Toggle";
 import { Textarea } from "@/components/ui/Textarea";
 import { SectionCard } from "@/components/agent-builder/SectionCard";
+import { useTelephonyCredentials, type TelephonyProviderId } from "@/hooks/useTelephonyCredentials";
 import type { AgentRecord } from "@/types";
 
 interface CallTabViewProps {
@@ -14,16 +16,56 @@ interface CallTabViewProps {
 const ambientNoiseOptions = ["None", "Office", "Cafe", "Street"];
 
 export default function CallTabView({ agent, onAgentChange }: CallTabViewProps) {
+  const provider = agent.telephonyProvider as TelephonyProviderId;
+  const { data: credentials = [] } = useTelephonyCredentials(provider);
+
+  // If the currently selected credential belongs to a different provider,
+  // clear it so the UI shows "Use default" until the user picks one.
+  useEffect(() => {
+    if (!agent.telephonyCredentialId) return;
+    const match = credentials.find((c) => c.id === agent.telephonyCredentialId);
+    if (!match) {
+      onAgentChange({ telephonyCredentialId: "" });
+    }
+  }, [credentials, agent.telephonyCredentialId, onAgentChange]);
+
   return (
     <div className="tab-stack">
       <SectionCard title="Call Configuration">
         <div className="form-grid form-grid--2">
           <label className="field">
             <span>Telephony Provider</span>
-            <Select value={agent.telephonyProvider} onChange={(event) => onAgentChange({ telephonyProvider: event.target.value as AgentRecord["telephonyProvider"] })}>
+            <Select
+              value={agent.telephonyProvider}
+              onChange={(event) =>
+                onAgentChange({
+                  telephonyProvider: event.target.value as AgentRecord["telephonyProvider"],
+                  telephonyCredentialId: ""
+                })
+              }
+            >
               <option value="plivo">Plivo</option>
               <option value="exotel">Exotel</option>
             </Select>
+          </label>
+          <label className="field">
+            <span>Account / Number</span>
+            <Select
+              value={agent.telephonyCredentialId || ""}
+              onChange={(event) => onAgentChange({ telephonyCredentialId: event.target.value })}
+            >
+              <option value="">Use default {provider} account</option>
+              {credentials.map((cred) => (
+                <option key={cred.id} value={cred.id}>
+                  {cred.name} ({cred.phoneNumber}){cred.isDefault ? " — default" : ""}
+                </option>
+              ))}
+            </Select>
+            {credentials.length === 0 && (
+              <small style={{ color: "#94a3b8" }}>
+                No {provider} accounts added yet. Add them in Settings → Providers.
+              </small>
+            )}
           </label>
           <label className="field">
             <span>Ambient Noise</span>
@@ -70,7 +112,9 @@ export default function CallTabView({ agent, onAgentChange }: CallTabViewProps) 
             />
           </div>
         </div>
-        <div className="helper-text">Using provider configuration from Settings &gt; Providers.</div>
+        <div className="helper-text">
+          Manage accounts &amp; phone numbers in Settings &gt; Providers.
+        </div>
       </SectionCard>
 
       <SectionCard title="Final Call Message">

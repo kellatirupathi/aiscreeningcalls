@@ -6,6 +6,7 @@ interface AgentEntity {
   geminiModel: string;
   geminiVoice: string;
   telephonyProvider: string;
+  telephonyCredentialId: string | null;
   welcomeMessage: string;
   systemPrompt: string;
   language: string;
@@ -25,6 +26,7 @@ interface AgentEntity {
   geminiCredentialId: string | null;
   ttsBufferSize: number;
   ttsSpeedRate: number;
+  ttsSampleRate: number;
   ttsSimilarityBoost: number;
   ttsStability: number;
   ttsStyleExaggeration: number;
@@ -241,6 +243,7 @@ export function mapAgent(agent: AgentEntity) {
     geminiModel: agent.geminiModel,
     geminiVoice: agent.geminiVoice,
     telephonyProvider: agent.telephonyProvider as "plivo" | "exotel",
+    telephonyCredentialId: agent.telephonyCredentialId ?? "",
     costPerMinute: "",
     welcomeMessage: agent.welcomeMessage,
     prompt: agent.systemPrompt,
@@ -261,6 +264,7 @@ export function mapAgent(agent: AgentEntity) {
     geminiCredentialId: agent.geminiCredentialId ?? "",
     ttsBufferSize: agent.ttsBufferSize,
     ttsSpeedRate: agent.ttsSpeedRate,
+    ttsSampleRate: agent.ttsSampleRate,
     ttsSimilarityBoost: agent.ttsSimilarityBoost,
     ttsStability: agent.ttsStability,
     ttsStyleExaggeration: agent.ttsStyleExaggeration,

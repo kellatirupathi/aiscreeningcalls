@@ -2,6 +2,7 @@ import { Router } from "express";
 import { requireRoles } from "../middleware/auth.middleware.js";
 import { prisma } from "../db/prisma.js";
 import { asyncHandler } from "../utils/asyncHandler.js";
+import { seedSarvamVoicesForOrganization } from "../services/voices/SarvamVoiceSeeder.js";
 
 export const voiceRoutes = Router();
 
@@ -9,8 +10,20 @@ export const voiceRoutes = Router();
 voiceRoutes.get(
   "/",
   asyncHandler(async (req, res) => {
+    const orgId = req.auth!.organizationId;
+
+    // Lazy auto-seed: if this org has no Sarvam voices yet, create the
+    // standard speaker set so the agent's Voice dropdown is populated
+    // without the user manually adding each one.
+    try {
+      await seedSarvamVoicesForOrganization(orgId);
+    } catch (err) {
+      console.error("[voices] Sarvam voice seed failed:", (err as Error).message);
+      // Don't block listing — continue with whatever voices already exist
+    }
+
     const voices = await prisma.voice.findMany({
-      where: { organizationId: req.auth!.organizationId },
+      where: { organizationId: orgId },
       orderBy: { createdAt: "desc" }
     });
     res.json(voices);

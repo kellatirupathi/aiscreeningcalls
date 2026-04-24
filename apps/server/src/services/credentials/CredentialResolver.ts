@@ -2,6 +2,7 @@ import { prisma } from "../../db/prisma.js";
 import { env } from "../../config/env.js";
 import { decryptJson } from "../../utils/crypto.js";
 import type { CredentialConfig } from "../../routes/aiCredentials.routes.js";
+import type { TelephonyCredentialConfig } from "../../routes/telephonyCredentials.routes.js";
 
 /**
  * Resolved credential for an agent's AI service.
@@ -186,6 +187,37 @@ export async function resolveElevenLabsCredential(
 }
 
 /**
+ * Resolve Sarvam credential (TTS provider for Indian languages).
+ */
+export async function resolveSarvamCredential(
+  organizationId: string,
+  credentialId?: string | null
+): Promise<ResolvedCredential> {
+  let config = await loadCredentialFromDb(credentialId);
+  if (!config) config = await loadDefaultForProvider(organizationId, "sarvam");
+
+  if (config?.apiKey) {
+    return {
+      apiKey: config.apiKey,
+      defaultVoiceId: config.defaultVoiceId,
+      ttsModel: config.ttsModel,
+      source: "database"
+    };
+  }
+
+  if (env.SARVAM_API_KEY) {
+    return {
+      apiKey: env.SARVAM_API_KEY,
+      defaultVoiceId: env.SARVAM_DEFAULT_VOICE_ID,
+      ttsModel: env.SARVAM_TTS_MODEL,
+      source: "env"
+    };
+  }
+
+  return { apiKey: "", source: "none" };
+}
+
+/**
  * Resolve Deepgram credential.
  */
 export async function resolveDeepgramCredential(
@@ -276,5 +308,109 @@ export async function resolveTtsCredential(
   if (ttsProvider === "elevenlabs") {
     return resolveElevenLabsCredential(organizationId, credentialId);
   }
+  if (ttsProvider === "sarvam") {
+    return resolveSarvamCredential(organizationId, credentialId);
+  }
   return { apiKey: "", source: "none" };
+}
+
+/**
+ * Resolved telephony credential for an agent. Combines API credentials
+ * with the phone number tied to that account.
+ */
+export interface ResolvedTelephonyCredential {
+  provider: "plivo" | "exotel";
+  // Plivo
+  authId?: string;
+  authToken?: string;
+  // Exotel
+  accountSid?: string;
+  apiKey?: string;
+  apiToken?: string;
+  subdomain?: string;
+  appId?: string;
+  // Phone number associated with this credential
+  fromNumber?: string;
+  source: "database" | "env" | "none";
+}
+
+async function loadTelephonyFromDb(credentialId: string | null | undefined) {
+  if (!credentialId) return null;
+  try {
+    const cred = await prisma.telephonyConfig.findUnique({ where: { id: credentialId } });
+    if (!cred) return null;
+    return cred;
+  } catch (err) {
+    console.error("[CredentialResolver] Failed to load telephony credential:", (err as Error).message);
+    return null;
+  }
+}
+
+async function loadDefaultTelephonyForProvider(organizationId: string, provider: string) {
+  try {
+    return await prisma.telephonyConfig.findFirst({
+      where: { organizationId, provider, isDefault: true }
+    });
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Resolve telephony credential for an agent.
+ * Priority: agent.telephonyCredentialId → org default for provider → env fallback
+ */
+export async function resolveTelephonyCredential(
+  organizationId: string,
+  telephonyProvider: string,
+  credentialId?: string | null
+): Promise<ResolvedTelephonyCredential> {
+  const provider = telephonyProvider === "exotel" ? "exotel" : "plivo";
+
+  let row = await loadTelephonyFromDb(credentialId);
+  // Only honor the explicit credential if it matches the requested provider,
+  // otherwise fall back to the org default for the provider.
+  if (row && row.provider !== provider) row = null;
+  if (!row) row = await loadDefaultTelephonyForProvider(organizationId, provider);
+
+  if (row) {
+    const config = decryptJson<TelephonyCredentialConfig>(row.credentialsEncrypted) ?? {};
+    return {
+      provider,
+      authId: config.authId,
+      authToken: config.authToken,
+      accountSid: config.accountSid,
+      apiKey: config.apiKey,
+      apiToken: config.apiToken,
+      subdomain: config.subdomain,
+      appId: config.appId,
+      fromNumber: row.defaultFromNumber ?? undefined,
+      source: "database"
+    };
+  }
+
+  // Env fallback
+  if (provider === "plivo" && env.PLIVO_AUTH_ID && env.PLIVO_AUTH_TOKEN) {
+    return {
+      provider: "plivo",
+      authId: env.PLIVO_AUTH_ID,
+      authToken: env.PLIVO_AUTH_TOKEN,
+      fromNumber: env.PLIVO_DEFAULT_NUMBER,
+      source: "env"
+    };
+  }
+  if (provider === "exotel" && env.EXOTEL_ACCOUNT_SID && env.EXOTEL_API_KEY && env.EXOTEL_API_TOKEN) {
+    return {
+      provider: "exotel",
+      accountSid: env.EXOTEL_ACCOUNT_SID,
+      apiKey: env.EXOTEL_API_KEY,
+      apiToken: env.EXOTEL_API_TOKEN,
+      subdomain: env.EXOTEL_SUBDOMAIN || "api",
+      appId: env.EXOTEL_APP_ID ?? "",
+      fromNumber: env.EXOTEL_DEFAULT_NUMBER,
+      source: "env"
+    };
+  }
+
+  return { provider, source: "none" };
 }

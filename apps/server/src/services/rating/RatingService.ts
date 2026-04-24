@@ -64,8 +64,11 @@ export function extractSkillsFromPrompt(systemPrompt: string): string[] {
 }
 
 export class RatingService {
-  private async getClient(organizationId: string, llmCredentialId?: string | null): Promise<{ client: OpenAI; model: string }> {
-    const cred = await resolveOpenAiCredential(organizationId, llmCredentialId ?? null);
+  // Rating generation ALWAYS uses OpenAI — never the agent's LLM credential
+  // (which may be Groq / another provider). We resolve OpenAI from the org's
+  // default openai credential, falling back to env.OPENAI_API_KEY.
+  private async getClient(organizationId: string): Promise<{ client: OpenAI; model: string }> {
+    const cred = await resolveOpenAiCredential(organizationId, null);
     const apiKey = cred.apiKey || env.OPENAI_API_KEY;
     if (!apiKey) throw new Error("OPENAI_API_KEY not configured for rating generation");
     const model = cred.defaultModel || env.OPENAI_MODEL || "gpt-4o-mini";
@@ -75,15 +78,15 @@ export class RatingService {
   /**
    * Generate a structured rating for a completed call.
    * Returns parsed rating + the model name used.
+   * Rating always uses OpenAI (independent of the agent's LLM provider).
    */
   async generate(
     organizationId: string,
     transcript: string,
-    skills: string[],
-    llmCredentialId?: string | null
+    skills: string[]
   ): Promise<{ result: RatingResult; model: string }> {
     const skillList = skills.length > 0 ? skills : FALLBACK_SKILLS;
-    const { client, model } = await this.getClient(organizationId, llmCredentialId);
+    const { client, model } = await this.getClient(organizationId);
 
     // 30s timeout so a hung OpenAI call doesn't block the Bull worker slot forever
     const abortController = new AbortController();
@@ -207,8 +210,7 @@ ${transcript}`;
       const { result, model } = await this.generate(
         call.organizationId,
         transcript,
-        skills,
-        call.agent.llmCredentialId
+        skills
       );
 
       // Compute overall rating as weighted average of all numeric ratings

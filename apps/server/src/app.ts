@@ -14,6 +14,7 @@ import { settingsRoutes } from "./routes/settings.routes.js";
 import { voiceRoutes } from "./routes/voices.routes.js";
 import { webhookRoutes } from "./routes/webhooks.routes.js";
 import { aiCredentialRoutes } from "./routes/aiCredentials.routes.js";
+import { telephonyCredentialRoutes } from "./routes/telephonyCredentials.routes.js";
 import { ratingRoutes } from "./routes/ratings.routes.js";
 import { env } from "./config/env.js";
 
@@ -59,6 +60,7 @@ export function createApp() {
   app.use("/api/numbers", authMiddleware, numberRoutes);
   app.use("/api/voices", authMiddleware, voiceRoutes);
   app.use("/api/ai-credentials", authMiddleware, requireRoles(["admin", "manager"]), aiCredentialRoutes);
+  app.use("/api/telephony-credentials", authMiddleware, requireRoles(["admin", "manager"]), telephonyCredentialRoutes);
   app.use("/api/settings", authMiddleware, requireRoles(["admin"]), settingsRoutes);
 
   app.use(errorHandler);

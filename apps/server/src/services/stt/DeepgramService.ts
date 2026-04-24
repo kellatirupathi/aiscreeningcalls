@@ -9,6 +9,14 @@ export type TranscriptCallback = (
 /** Fired when Deepgram's VAD detects the speaker truly stopped talking. */
 export type UtteranceEndCallback = () => void;
 
+/**
+ * Fired when Deepgram's VAD detects the speaker JUST STARTED talking.
+ * This is the earliest signal we can get — fires within ~50-100ms of speech
+ * onset, BEFORE any transcript text is available. Used for preemptive
+ * barge-in: stop the agent's audio the moment the human opens their mouth.
+ */
+export type SpeechStartedCallback = () => void;
+
 interface DeepgramResultMessage {
   type: string;
   is_final?: boolean;
@@ -34,14 +42,15 @@ export class DeepgramService {
     onError?: (err: Error) => void,
     onClose?: () => void,
     endpointingMs?: number,
-    onUtteranceEnd?: UtteranceEndCallback
+    onUtteranceEnd?: UtteranceEndCallback,
+    onSpeechStarted?: SpeechStartedCallback
   ): WebSocket {
-    // Deepgram allows aggressive endpointing, but UtteranceEnd requires a
-    // minimum of 1000ms (server-side enforced — lower values return HTTP 400).
-    // Endpointing floor lowered 500→300ms so interim→final transitions fire
-    // faster, giving us a usable signal before UtteranceEnd.
-    const epMs = Math.max(300, Math.min(endpointingMs ?? 400, 5000));
-    const utteranceEndMs = Math.max(1000, Math.min(endpointingMs ?? 1000, 5000));
+    // Deepgram allows aggressive endpointing down to ~10ms. UtteranceEnd
+    // requires a server-side minimum of 1000ms (lower values return HTTP 400).
+    // We honour the agent's configured endpointing value to get fast
+    // interim→final transitions, which is the signal we actually act on.
+    const epMs = Math.max(100, Math.min(endpointingMs ?? 200, 5000));
+    const utteranceEndMs = 1000;
     const params = new URLSearchParams({
       encoding: "mulaw",
       sample_rate: "8000",
@@ -95,6 +104,13 @@ export class DeepgramService {
         // fixed debounce timer and much more accurate.
         if (result.type === "UtteranceEnd") {
           onUtteranceEnd?.();
+        }
+
+        // SpeechStarted: Deepgram's VAD has detected the speaker started.
+        // Fires ~50-100ms after speech onset — earliest possible signal,
+        // before any transcript is ready. Use this for preemptive barge-in.
+        if (result.type === "SpeechStarted") {
+          onSpeechStarted?.();
         }
       } catch {
         // silently ignore parse errors

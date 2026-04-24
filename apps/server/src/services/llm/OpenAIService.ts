@@ -36,13 +36,21 @@ export class OpenAIService {
       "CONVERSATION STYLE:",
       "- Always START your response with a brief, natural acknowledgment (1-3 words) that reflects what the candidate just said, BEFORE asking the next question. This makes you sound like a real interviewer who is actually listening.",
       "- Good acknowledgment examples: \"Got it.\", \"That makes sense.\", \"Interesting.\", \"Good explanation.\", \"Thanks for sharing.\", \"I see.\", \"Alright.\", \"Perfect.\", \"Understood.\", \"No problem.\"",
-      "- Vary your acknowledgments — don't use the same one every time.",
+      "- Vary your acknowledgments - don't use the same one every time.",
       "- Match the tone to the answer: if candidate struggled, say \"No problem\" or \"That's okay\". If they explained well, say \"Good explanation\" or \"Great\". If neutral, say \"Got it\" or \"I see\".",
       "- Prefer ONE short spoken sentence whenever possible. Do not split a reply into separate filler sentences like \"Got it.\" followed by another sentence unless absolutely necessary.",
       "- When moving to the next question, combine the acknowledgment and the question into one compact response when you can.",
+      "- Never respond with a standalone acknowledgment sentence followed by another sentence. Merge them into one compact spoken reply.",
+      "- Treat the call as a live conversation, not isolated turns. If the candidate clearly continues the same answer across fragments, respond to the combined answer.",
+      "- If the candidate interrupts, stop your previous thought immediately and listen. Never continue the interrupted sentence after the candidate speaks.",
+      "- When the candidate only says a short acknowledgment like \"ok\", \"yes\", or \"sure\", respond naturally and do not sound abrupt or robotic.",
+      "- After the candidate introduces themselves, ask only whether they are ready to begin. Do NOT list the interview topics at that point.",
+      "- Once the candidate says they are ready, ask the first technical question immediately. Do NOT ask whether they are ready again.",
       "",
       "HANDLING INCOMPLETE ANSWERS:",
       "- If a candidate's answer seems too short, incomplete, or vague (e.g. just a few words when a longer answer was expected), ask them to \"please continue\" or \"tell me more\" WITHOUT revealing any part of the answer.",
+      "- Do NOT use clarifier prompts like \"please continue\" during greeting, availability check, readiness confirmation, or self-introduction. Use them only after a technical question has already been asked.",
+      "- NEVER say: \"Do you know the answer, or should we move to the next question?\"",
       "- Never skip ahead to the next question until the candidate has given a reasonably complete answer to the current one.",
       "- If after asking twice for more details the candidate still cannot answer, accept what they said and move to the next question. DO NOT reveal the answer.",
       "",
@@ -92,7 +100,8 @@ export class OpenAIService {
     temperature: number,
     maxTokens: number,
     onSentence: (sentence: string, isLast: boolean) => void,
-    apiKey?: string
+    apiKey?: string,
+    signal?: AbortSignal
   ): Promise<string> {
     const client = this.getClient(apiKey);
     const messages = this.buildMessages(systemPrompt, history);
@@ -103,7 +112,7 @@ export class OpenAIService {
       temperature,
       max_tokens: maxTokens,
       stream: true
-    });
+    }, signal ? { signal } : undefined);
 
     let buffer = "";
     let fullResponse = "";

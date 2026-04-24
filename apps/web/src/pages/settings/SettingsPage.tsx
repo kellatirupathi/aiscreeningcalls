@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { NavLink } from "react-router-dom";
-import { Plus, Trash2, X, Save, CheckCircle, FlaskConical } from "lucide-react";
+import { Plus, Trash2, X, Save, CheckCircle, FlaskConical, Edit2 } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { Card } from "@/components/ui/Card";
 import { EmptyState } from "@/components/ui/EmptyState";
@@ -10,13 +10,14 @@ import { Select } from "@/components/ui/Select";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import { useCurrentUser } from "@/hooks/useCurrentUser";
 import {
-  useSettings, useSaveProviders, useSaveOpenAI, useSaveGemini, useSaveCartesia,
+  useSettings, useSaveOpenAI, useSaveGemini, useSaveCartesia,
   useSaveDeepgram, useSaveElevenLabs, useSaveStorage,
-  useTestProviders, useTestAI, useTestStorage
+  useTestAI, useTestStorage
 } from "@/hooks/useSettings";
-import { useVoices, useCreateVoice, useDeleteVoice } from "@/hooks/useVoices";
+import { useVoices, useCreateVoice, useUpdateVoice, useDeleteVoice, type VoiceRecord } from "@/hooks/useVoices";
 import { useCreateTeamMember, useUpdateTeamMember, useDeleteTeamMember } from "@/hooks/useTeam";
 import { AiCredentialsManager } from "@/components/settings/AiCredentialsManager";
+import { TelephonyCredentialsManager } from "@/components/settings/TelephonyCredentialsManager";
 
 interface SettingsPageProps {
   tab: "workspace" | "providers" | "ai-services" | "storage" | "team";
@@ -45,15 +46,8 @@ export default function SettingsPage({ tab }: SettingsPageProps) {
   const { data: currentUser } = useCurrentUser();
   const { data: voices = [] } = useVoices();
   const createVoice = useCreateVoice();
+  const updateVoice = useUpdateVoice();
   const deleteVoice = useDeleteVoice();
-
-  // Provider state
-  const [plivoAuthId, setPlivoAuthId] = useState("");
-  const [plivoAuthToken, setPlivoAuthToken] = useState("");
-  const [exotelSid, setExotelSid] = useState("");
-  const [exotelKey, setExotelKey] = useState("");
-  const [exotelToken, setExotelToken] = useState("");
-  const [exotelAppId, setExotelAppId] = useState("");
 
   // AI state
   const [openaiKey, setOpenaiKey] = useState("");
@@ -85,6 +79,13 @@ export default function SettingsPage({ tab }: SettingsPageProps) {
   const [vGender, setVGender] = useState("");
   const [vDesc, setVDesc] = useState("");
   const [vDefault, setVDefault] = useState(false);
+  // When set, the form is in EDIT mode for this voice id; otherwise CREATE mode.
+  const [editingVoiceId, setEditingVoiceId] = useState<string | null>(null);
+
+  // Voice Library filter tabs
+  const [voiceTab, setVoiceTab] = useState<"sarvam" | "cartesia" | "elevenlabs">("sarvam");
+  const [voiceLangFilter, setVoiceLangFilter] = useState<"all" | "en" | "hi">("all");
+  const [voiceModelFilter, setVoiceModelFilter] = useState<"all" | "bulbul:v2" | "bulbul:v3">("all");
 
   // Team state
   const [showUserForm, setShowUserForm] = useState(false);
@@ -111,26 +112,18 @@ export default function SettingsPage({ tab }: SettingsPageProps) {
   }
 
   // Mutations
-  const saveProviders = useSaveProviders();
   const saveOpenAI = useSaveOpenAI();
   const saveGemini = useSaveGemini();
   const saveCartesia = useSaveCartesia();
   const saveDeepgram = useSaveDeepgram();
   const saveElevenLabs = useSaveElevenLabs();
   const saveStorage = useSaveStorage();
-  const testProviders = useTestProviders();
   const testAI = useTestAI();
   const testStorage = useTestStorage();
 
   // Hydrate from server data
   useEffect(() => {
     if (!data) return;
-    setPlivoAuthId(data.providers.plivo.authId);
-    setPlivoAuthToken(data.providers.plivo.authToken);
-    setExotelSid(data.providers.exotel.accountSid);
-    setExotelKey(data.providers.exotel.apiKey);
-    setExotelToken(data.providers.exotel.apiToken);
-    setExotelAppId(data.providers.exotel.appId);
     setOpenaiKey(data.aiServices.openai.apiKey);
     setOpenaiModel(data.aiServices.openai.defaultModel);
     setGeminiKey(data.aiServices.gemini?.apiKey ?? "");
@@ -150,19 +143,61 @@ export default function SettingsPage({ tab }: SettingsPageProps) {
     setAwsBucket(data.storage.bucketName);
   }, [data]);
 
-  function handleTest(mutation: typeof testProviders) {
+  function handleTest(mutation: typeof testAI) {
     mutation.mutate(undefined, {
       onSuccess: (r) => window.alert(r.message),
       onError: () => window.alert("Test failed.")
     });
   }
 
-  function handleAddVoice() {
+  function resetVoiceForm() {
+    setVName("");
+    setVId("");
+    setVProvider("cartesia");
+    setVLang("en");
+    setVGender("");
+    setVDesc("");
+    setVDefault(false);
+    setEditingVoiceId(null);
+    setShowVoiceForm(false);
+  }
+
+  function startEditVoice(v: VoiceRecord) {
+    setEditingVoiceId(v.id);
+    setVName(v.name);
+    setVId(v.voiceId);
+    setVProvider(v.provider);
+    setVLang(v.language);
+    setVGender(v.gender ?? "");
+    setVDesc(v.description ?? "");
+    setVDefault(v.isDefault);
+    setShowVoiceForm(true);
+  }
+
+  function handleSaveVoice() {
     if (!vName.trim() || !vId.trim()) { window.alert("Name and Voice ID required."); return; }
-    createVoice.mutate(
-      { name: vName.trim(), voiceId: vId.trim(), provider: vProvider, language: vLang, gender: vGender || undefined, description: vDesc || undefined, isDefault: vDefault },
-      { onSuccess: () => { setVName(""); setVId(""); setVGender(""); setVDesc(""); setVDefault(false); setShowVoiceForm(false); } }
-    );
+
+    if (editingVoiceId) {
+      updateVoice.mutate(
+        {
+          id: editingVoiceId,
+          payload: {
+            name: vName.trim(),
+            voiceId: vId.trim(),
+            language: vLang,
+            gender: vGender || null,
+            description: vDesc || null,
+            isDefault: vDefault
+          }
+        },
+        { onSuccess: resetVoiceForm }
+      );
+    } else {
+      createVoice.mutate(
+        { name: vName.trim(), voiceId: vId.trim(), provider: vProvider, language: vLang, gender: vGender || undefined, description: vDesc || undefined, isDefault: vDefault },
+        { onSuccess: resetVoiceForm }
+      );
+    }
   }
 
   if (isLoading) {
@@ -213,28 +248,7 @@ export default function SettingsPage({ tab }: SettingsPageProps) {
 
       {/* ─── Providers ─────────────────────────────────────────────── */}
       {tab === "providers" ? (
-        <div className="tab-stack">
-          <Card className="form-card">
-            <div className="section-title">Plivo</div>
-            <div className="form-grid form-grid--2">
-              <label className="field"><span>Auth ID</span><Input value={plivoAuthId} onChange={(e) => setPlivoAuthId(e.target.value)} /></label>
-              <label className="field"><span>Auth Token</span><Input value={plivoAuthToken} onChange={(e) => setPlivoAuthToken(e.target.value)} /></label>
-            </div>
-          </Card>
-          <Card className="form-card">
-            <div className="section-title">Exotel</div>
-            <div className="form-grid form-grid--2">
-              <label className="field"><span>Account SID</span><Input value={exotelSid} onChange={(e) => setExotelSid(e.target.value)} /></label>
-              <label className="field"><span>API Key</span><Input value={exotelKey} onChange={(e) => setExotelKey(e.target.value)} /></label>
-              <label className="field"><span>API Token</span><Input value={exotelToken} onChange={(e) => setExotelToken(e.target.value)} /></label>
-              <label className="field"><span>App ID</span><Input value={exotelAppId} onChange={(e) => setExotelAppId(e.target.value)} /></label>
-            </div>
-          </Card>
-          <div style={{ display: "flex", gap: 10 }}>
-            <SaveBtn onClick={() => saveProviders.mutate({ plivo: { authId: plivoAuthId, authToken: plivoAuthToken }, exotel: { accountSid: exotelSid, apiKey: exotelKey, apiToken: exotelToken, appId: exotelAppId } }, { onSuccess: () => window.alert("Provider settings saved.") })} isPending={saveProviders.isPending} />
-            <TestBtn onClick={() => handleTest(testProviders)} isPending={testProviders.isPending} />
-          </div>
-        </div>
+        <TelephonyCredentialsManager />
       ) : null}
 
       {/* ─── AI Services ───────────────────────────────────────────── */}
@@ -246,21 +260,43 @@ export default function SettingsPage({ tab }: SettingsPageProps) {
           <Card className="form-card">
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
               <div className="section-title" style={{ marginBottom: 0 }}>Voice Library</div>
-              <Button variant="primary" onClick={() => setShowVoiceForm(!showVoiceForm)}>
+              <Button variant="primary" onClick={() => (showVoiceForm ? resetVoiceForm() : setShowVoiceForm(true))}>
                 {showVoiceForm ? <><X size={14} /> Cancel</> : <><Plus size={14} /> Add Voice</>}
               </Button>
             </div>
 
             {showVoiceForm && (
               <div style={{ padding: 16, borderRadius: 12, background: "var(--slate-soft)", marginBottom: 16 }}>
+                {editingVoiceId && (
+                  <div style={{ marginBottom: 12, fontSize: 13, fontWeight: 600, color: "var(--blue)" }}>
+                    Editing voice
+                  </div>
+                )}
                 <div className="form-grid form-grid--2">
                   <label className="field"><span>Voice Name *</span><Input placeholder="e.g. Sarah English" value={vName} onChange={(e) => setVName(e.target.value)} /></label>
-                  <label className="field"><span>Voice ID (UUID) *</span><Input placeholder="faf0731e-dfb9-..." value={vId} onChange={(e) => setVId(e.target.value)} /></label>
+                  <label className="field">
+                    <span>
+                      {vProvider === "sarvam" ? "Speaker Name *" : "Voice ID (UUID) *"}
+                    </span>
+                    <Input
+                      placeholder={
+                        vProvider === "sarvam"
+                          ? "e.g. ritu, anushka, meera (lowercase)"
+                          : vProvider === "elevenlabs"
+                          ? "e.g. 21m00Tcm4TlvDq8ikWAM"
+                          : "e.g. faf0731e-dfb9-4cfc-8119-..."
+                      }
+                      value={vId}
+                      onChange={(e) => setVId(e.target.value)}
+                    />
+                  </label>
                   <label className="field"><span>Provider</span>
-                    <Select value={vProvider} onChange={(e) => setVProvider(e.target.value)}>
+                    <Select value={vProvider} onChange={(e) => setVProvider(e.target.value)} disabled={!!editingVoiceId}>
                       <option value="cartesia">Cartesia</option>
                       <option value="elevenlabs">ElevenLabs</option>
+                      <option value="sarvam">Sarvam</option>
                     </Select>
+                    {editingVoiceId && <small style={{ color: "var(--text-muted)", fontSize: 11 }}>Provider can't be changed when editing.</small>}
                   </label>
                   <label className="field"><span>Language</span>
                     <Select value={vLang} onChange={(e) => setVLang(e.target.value)}>
@@ -278,35 +314,191 @@ export default function SettingsPage({ tab }: SettingsPageProps) {
                   <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, cursor: "pointer" }}>
                     <input type="checkbox" checked={vDefault} onChange={(e) => setVDefault(e.target.checked)} /> Set as default
                   </label>
-                  <Button variant="primary" onClick={handleAddVoice} disabled={createVoice.isPending}>
-                    {createVoice.isPending ? "Adding..." : "Add Voice"}
-                  </Button>
+                  <div style={{ display: "flex", gap: 8 }}>
+                    {editingVoiceId && (
+                      <Button onClick={resetVoiceForm} disabled={updateVoice.isPending}>
+                        Cancel
+                      </Button>
+                    )}
+                    <Button
+                      variant="primary"
+                      onClick={handleSaveVoice}
+                      disabled={createVoice.isPending || updateVoice.isPending}
+                    >
+                      {editingVoiceId
+                        ? (updateVoice.isPending ? "Saving..." : "Save Changes")
+                        : (createVoice.isPending ? "Adding..." : "Add Voice")}
+                    </Button>
+                  </div>
                 </div>
               </div>
             )}
 
-            {voices.length === 0 ? (
-              <div style={{ textAlign: "center", padding: "24px 0", color: "var(--text-muted)", fontSize: 13 }}>No voices yet. Add voices for your agents.</div>
-            ) : (
-              <div style={{ display: "grid", gap: 8 }}>
-                {voices.map((v) => (
-                  <div key={v.id} style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 14px", borderRadius: 10, border: "1px solid var(--card-border)", background: v.isDefault ? "var(--blue-soft)" : "white" }}>
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                        <strong style={{ fontSize: 14 }}>{v.name}</strong>
-                        {v.isDefault && <StatusBadge tone="info">Default</StatusBadge>}
-                        {v.gender && <span style={{ fontSize: 11, color: "var(--text-muted)", textTransform: "capitalize" }}>{v.gender}</span>}
-                      </div>
-                      <div style={{ fontSize: 12, color: "var(--text-muted)", marginTop: 2, display: "flex", gap: 12 }}>
-                        <span>{v.provider}</span><span>Lang: {v.language}</span><span style={{ fontFamily: "monospace", fontSize: 11 }}>{v.voiceId.slice(0, 16)}...</span>
-                      </div>
-                      {v.description && <div style={{ fontSize: 12, color: "var(--text-secondary)", marginTop: 4 }}>{v.description}</div>}
-                    </div>
-                    <Button onClick={() => { if (window.confirm(`Delete "${v.name}"?`)) deleteVoice.mutate(v.id); }}><Trash2 size={13} /></Button>
+            {/* Provider tabs */}
+            {(() => {
+              const providerTabs: Array<{ id: "sarvam" | "cartesia" | "elevenlabs"; label: string }> = [
+                { id: "sarvam", label: "Sarvam" },
+                { id: "cartesia", label: "Cartesia" },
+                { id: "elevenlabs", label: "ElevenLabs" }
+              ];
+              const providerCounts: Record<string, number> = voices.reduce((acc, v) => {
+                acc[v.provider] = (acc[v.provider] ?? 0) + 1;
+                return acc;
+              }, {} as Record<string, number>);
+
+              // Extract model (bulbul:v2 / bulbul:v3) from Sarvam voice description.
+              // The seeder embeds "(bulbul:vX)" in the description for Sarvam voices.
+              const extractSarvamModel = (desc: string | null | undefined): string | null => {
+                if (!desc) return null;
+                const m = desc.match(/bulbul:v(\d+)/i);
+                return m ? `bulbul:v${m[1]}` : null;
+              };
+
+              // Languages available for the currently selected provider
+              const langsForProvider = Array.from(
+                new Set(voices.filter((v) => v.provider === voiceTab).map((v) => v.language))
+              );
+              const showLangFilter = voiceTab === "sarvam" && langsForProvider.length > 1;
+
+              // Models available for the currently selected provider (Sarvam only)
+              const modelsForProvider = Array.from(
+                new Set(
+                  voices
+                    .filter((v) => v.provider === voiceTab)
+                    .map((v) => extractSarvamModel(v.description))
+                    .filter((m): m is string => m !== null)
+                )
+              ).sort();
+              const showModelFilter = voiceTab === "sarvam" && modelsForProvider.length > 1;
+
+              const filteredVoices = voices.filter((v) => {
+                if (v.provider !== voiceTab) return false;
+                if (showLangFilter && voiceLangFilter !== "all" && v.language !== voiceLangFilter) return false;
+                if (showModelFilter && voiceModelFilter !== "all") {
+                  const m = extractSarvamModel(v.description);
+                  if (m !== voiceModelFilter) return false;
+                }
+                return true;
+              });
+
+              return (
+                <>
+                  <div style={{ display: "flex", gap: 4, borderBottom: "1px solid var(--card-border)", marginBottom: 14 }}>
+                    {providerTabs.map((t) => (
+                      <button
+                        key={t.id}
+                        onClick={() => { setVoiceTab(t.id); setVoiceLangFilter("all"); setVoiceModelFilter("all"); }}
+                        style={{
+                          padding: "8px 16px",
+                          background: "transparent",
+                          border: "none",
+                          borderBottom: voiceTab === t.id ? "2px solid var(--blue)" : "2px solid transparent",
+                          color: voiceTab === t.id ? "var(--blue)" : "var(--text-muted)",
+                          fontWeight: voiceTab === t.id ? 700 : 500,
+                          fontSize: 13,
+                          cursor: "pointer",
+                          marginBottom: -1
+                        }}
+                      >
+                        {t.label}
+                        <span style={{ marginLeft: 6, fontSize: 11, color: "var(--text-muted)", fontWeight: 500 }}>
+                          ({providerCounts[t.id] ?? 0})
+                        </span>
+                      </button>
+                    ))}
                   </div>
-                ))}
-              </div>
-            )}
+
+                  {/* Language sub-filter (Sarvam only, when multiple languages exist) */}
+                  {showLangFilter && (
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+                      <span style={{ fontSize: 11, fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: ".04em", minWidth: 70 }}>Language</span>
+                      <div style={{ display: "flex", gap: 6 }}>
+                        {(["all", "en", "hi"] as const).map((lang) => (
+                          <button
+                            key={lang}
+                            onClick={() => setVoiceLangFilter(lang)}
+                            style={{
+                              padding: "4px 12px",
+                              background: voiceLangFilter === lang ? "var(--blue-soft)" : "transparent",
+                              border: `1px solid ${voiceLangFilter === lang ? "var(--blue)" : "var(--card-border)"}`,
+                              borderRadius: 999,
+                              color: voiceLangFilter === lang ? "var(--blue)" : "var(--text-secondary)",
+                              fontSize: 12,
+                              fontWeight: voiceLangFilter === lang ? 700 : 500,
+                              cursor: "pointer"
+                            }}
+                          >
+                            {lang === "all" ? "All" : lang === "en" ? "English" : "Hindi"}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Model sub-filter (Sarvam only, when multiple models exist) */}
+                  {showModelFilter && (
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
+                      <span style={{ fontSize: 11, fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: ".04em", minWidth: 70 }}>Model</span>
+                      <div style={{ display: "flex", gap: 6 }}>
+                        {(["all", ...modelsForProvider] as const).map((model) => (
+                          <button
+                            key={model}
+                            onClick={() => setVoiceModelFilter(model as "all" | "bulbul:v2" | "bulbul:v3")}
+                            style={{
+                              padding: "4px 12px",
+                              background: voiceModelFilter === model ? "var(--blue-soft)" : "transparent",
+                              border: `1px solid ${voiceModelFilter === model ? "var(--blue)" : "var(--card-border)"}`,
+                              borderRadius: 999,
+                              color: voiceModelFilter === model ? "var(--blue)" : "var(--text-secondary)",
+                              fontSize: 12,
+                              fontWeight: voiceModelFilter === model ? 700 : 500,
+                              cursor: "pointer"
+                            }}
+                          >
+                            {model === "all" ? "All" : model}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {filteredVoices.length === 0 ? (
+                    <div style={{ textAlign: "center", padding: "24px 0", color: "var(--text-muted)", fontSize: 13 }}>
+                      No {voiceTab} voices{showLangFilter && voiceLangFilter !== "all" ? ` in ${voiceLangFilter === "en" ? "English" : "Hindi"}` : ""}. Click "Add Voice" to create one.
+                    </div>
+                  ) : (
+                    <div style={{ display: "grid", gap: 8 }}>
+                      {filteredVoices.map((v) => (
+                        <div key={v.id} style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 14px", borderRadius: 10, border: "1px solid var(--card-border)", background: v.isDefault ? "var(--blue-soft)" : "white" }}>
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                              <strong style={{ fontSize: 14 }}>{v.name}</strong>
+                              {v.isDefault && <StatusBadge tone="info">Default</StatusBadge>}
+                              {v.gender && <span style={{ fontSize: 11, color: "var(--text-muted)", textTransform: "capitalize" }}>{v.gender}</span>}
+                            </div>
+                            <div style={{ fontSize: 12, color: "var(--text-muted)", marginTop: 2, display: "flex", gap: 12 }}>
+                              <span>{v.provider}</span><span>Lang: {v.language}</span><span style={{ fontFamily: "monospace", fontSize: 11 }}>{v.voiceId.slice(0, 16)}...</span>
+                            </div>
+                            {v.description && <div style={{ fontSize: 12, color: "var(--text-secondary)", marginTop: 4 }}>{v.description}</div>}
+                          </div>
+                          <div style={{ display: "flex", gap: 6 }}>
+                            <Button onClick={() => startEditVoice(v)} title="Edit voice">
+                              <Edit2 size={13} />
+                            </Button>
+                            <Button
+                              onClick={() => { if (window.confirm(`Delete "${v.name}"?`)) deleteVoice.mutate(v.id); }}
+                              title="Delete voice"
+                            >
+                              <Trash2 size={13} />
+                            </Button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </>
+              );
+            })()}
           </Card>
         </div>
       ) : null}
