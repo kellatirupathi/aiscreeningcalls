@@ -108,7 +108,7 @@ export async function resolveGroqCredential(
 
 /**
  * Resolve the LLM credential for an agent based on its provider config.
- * Routes to OpenAI or Groq based on llmProvider.
+ * Routes to the matching provider based on llmProvider. Defaults to OpenAI.
  */
 export async function resolveLlmCredential(
   organizationId: string,
@@ -117,6 +117,9 @@ export async function resolveLlmCredential(
 ): Promise<ResolvedCredential> {
   if (llmProvider === "groq") {
     return resolveGroqCredential(organizationId, credentialId);
+  }
+  if (llmProvider === "gemini") {
+    return resolveGeminiCredential(organizationId, credentialId);
   }
   return resolveOpenAiCredential(organizationId, credentialId);
 }

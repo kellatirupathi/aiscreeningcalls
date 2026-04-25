@@ -1,7 +1,13 @@
 import OpenAI from "openai";
 import { env } from "../../config/env.js";
 import { prisma } from "../../db/prisma.js";
-import { resolveOpenAiCredential } from "../credentials/CredentialResolver.js";
+import { resolveGeminiCredential } from "../credentials/CredentialResolver.js";
+
+// Rating generation hits Google's Gemini API via its OpenAI-compatible
+// endpoint so we can reuse the OpenAI SDK shape. Same base URL used by
+// GeminiService for live-call LLM responses.
+const GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai/";
+const RATING_MODEL_DEFAULT = "gemini-2.5-flash";
 
 export interface SkillRating {
   rating: number | null;
@@ -64,21 +70,29 @@ export function extractSkillsFromPrompt(systemPrompt: string): string[] {
 }
 
 export class RatingService {
-  // Rating generation ALWAYS uses OpenAI — never the agent's LLM credential
-  // (which may be Groq / another provider). We resolve OpenAI from the org's
-  // default openai credential, falling back to env.OPENAI_API_KEY.
+  // Rating generation ALWAYS uses Google Gemini 2.5 Flash — never the
+  // agent's LLM credential (which may be Groq/OpenAI/Gemini with any model).
+  // We resolve the Gemini API key from the org's default Gemini credential
+  // (falling back to env.GEMINI_API_KEY), but the MODEL is hard-pinned to
+  // gemini-2.5-flash because:
+  //   - Rating is a background job — latency doesn't matter
+  //   - Flash gives strong reasoning + reliable JSON output
+  //   - Using a non-flash model (e.g. flash-lite) risks malformed JSON
   private async getClient(organizationId: string): Promise<{ client: OpenAI; model: string }> {
-    const cred = await resolveOpenAiCredential(organizationId, null);
-    const apiKey = cred.apiKey || env.OPENAI_API_KEY;
-    if (!apiKey) throw new Error("OPENAI_API_KEY not configured for rating generation");
-    const model = cred.defaultModel || env.OPENAI_MODEL || "gpt-4o-mini";
-    return { client: new OpenAI({ apiKey }), model };
+    const cred = await resolveGeminiCredential(organizationId, null);
+    const apiKey = cred.apiKey || env.GEMINI_API_KEY;
+    if (!apiKey) throw new Error("GEMINI_API_KEY not configured for rating generation");
+
+    return {
+      client: new OpenAI({ apiKey, baseURL: GEMINI_BASE_URL }),
+      model: RATING_MODEL_DEFAULT
+    };
   }
 
   /**
    * Generate a structured rating for a completed call.
    * Returns parsed rating + the model name used.
-   * Rating always uses OpenAI (independent of the agent's LLM provider).
+   * Rating always uses Google Gemini (independent of the agent's LLM provider).
    */
   async generate(
     organizationId: string,
@@ -88,7 +102,7 @@ export class RatingService {
     const skillList = skills.length > 0 ? skills : FALLBACK_SKILLS;
     const { client, model } = await this.getClient(organizationId);
 
-    // 30s timeout so a hung OpenAI call doesn't block the Bull worker slot forever
+    // 30s timeout so a hung Gemini call doesn't block the Bull worker slot forever
     const abortController = new AbortController();
     const abortTimeout = setTimeout(() => abortController.abort(), 30_000);
 

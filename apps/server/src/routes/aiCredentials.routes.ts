@@ -96,6 +96,123 @@ aiCredentialRoutes.get(
   })
 );
 
+// ─── Gemini Live catalog — models + voices, fetched via credential's API key
+// Voice lists per Google's Gemini Live docs (not fetchable from their API,
+// so maintained here and served from backend instead of hardcoded in frontend).
+const GEMINI_2_0_LIVE_VOICES = [
+  "Puck", "Charon", "Kore", "Fenrir", "Aoede", "Orus", "Leda", "Zephyr"
+];
+
+const GEMINI_2_5_NATIVE_AUDIO_VOICES = [
+  // base 8 (same as 2.0)
+  "Puck", "Charon", "Kore", "Fenrir", "Aoede", "Orus", "Leda", "Zephyr",
+  // expanded set introduced with 2.5 native audio
+  "Enceladus", "Iapetus", "Umbriel", "Algieba", "Despina", "Erinome",
+  "Algenib", "Rasalgethi", "Laomedeia", "Achernar", "Alnilam", "Schedar",
+  "Gacrux", "Pulcherrima", "Achird", "Zubenelgenubi", "Vindemiatrix",
+  "Sadachbia", "Sadaltager", "Sulafat", "Autonoe", "Callirrhoe"
+];
+
+// Safe fallback if Google's API is unreachable so the UI still renders.
+const FALLBACK_LIVE_MODELS = [
+  "gemini-2.5-flash-preview-native-audio-dialog",
+  "gemini-2.5-flash-native-audio-latest",
+  "gemini-2.0-flash-live-001"
+];
+
+function voicesForModel(modelId: string): string[] {
+  // 2.5+ native audio family → expanded voice catalogue
+  if (/2\.5.*native-audio|3\.\d.*live|native-audio/i.test(modelId)) {
+    return GEMINI_2_5_NATIVE_AUDIO_VOICES;
+  }
+  // 2.0 Live → original 8 voices
+  return GEMINI_2_0_LIVE_VOICES;
+}
+
+// Filter Google's models.list response down to Gemini Live–capable models.
+// Live models expose "bidiGenerateContent" in supportedGenerationMethods,
+// or have "live" / "native-audio" in their name.
+interface GoogleModel {
+  name?: string;
+  supportedGenerationMethods?: string[];
+}
+
+function isLiveModel(m: GoogleModel): boolean {
+  const id = (m.name ?? "").replace(/^models\//, "");
+  if (!id.startsWith("gemini-")) return false;
+  const methods = m.supportedGenerationMethods ?? [];
+  if (methods.includes("bidiGenerateContent")) return true;
+  return /live|native-audio/i.test(id);
+}
+
+aiCredentialRoutes.get(
+  "/:id/gemini-live-catalog",
+  asyncHandler(async (req, res) => {
+    const orgId = req.auth!.organizationId;
+    const credential = await prisma.aiCredential.findUnique({
+      where: { id: String(req.params.id) }
+    });
+
+    if (!credential || credential.organizationId !== orgId) {
+      res.status(404).json({ message: "Credential not found." });
+      return;
+    }
+    if (credential.provider !== "gemini") {
+      res.status(400).json({ message: "This credential is not for Gemini." });
+      return;
+    }
+
+    const config = decryptJson<CredentialConfig>(credential.credentialsEncrypted);
+    const apiKey = config?.apiKey;
+    if (!apiKey) {
+      res.status(400).json({ message: "Credential has no API key." });
+      return;
+    }
+
+    let models: string[] = [];
+    let fetchedFromGoogle = false;
+    try {
+      const response = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models?key=${encodeURIComponent(apiKey)}`,
+        { method: "GET" }
+      );
+      if (response.ok) {
+        const data = (await response.json()) as { models?: GoogleModel[] };
+        models = (data.models ?? [])
+          .filter(isLiveModel)
+          .map((m) => (m.name ?? "").replace(/^models\//, ""))
+          .filter(Boolean);
+        fetchedFromGoogle = true;
+      } else {
+        console.warn(
+          `[gemini-live-catalog] Google models.list returned ${response.status} — using fallback list`
+        );
+      }
+    } catch (err) {
+      console.warn(
+        `[gemini-live-catalog] Google models.list failed: ${(err as Error).message} — using fallback list`
+      );
+    }
+
+    if (models.length === 0) {
+      models = FALLBACK_LIVE_MODELS;
+    }
+
+    // Build voicesByModel mapping for the frontend to swap voices when
+    // the user changes the model.
+    const voicesByModel: Record<string, string[]> = {};
+    for (const id of models) {
+      voicesByModel[id] = voicesForModel(id);
+    }
+
+    res.json({
+      source: fetchedFromGoogle ? "google" : "fallback",
+      models,
+      voicesByModel
+    });
+  })
+);
+
 // ─── POST /api/ai-credentials ─────────────────────────────────────────────
 aiCredentialRoutes.post(
   "/",

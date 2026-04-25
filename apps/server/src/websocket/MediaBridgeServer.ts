@@ -6,6 +6,7 @@ import { DeepgramService } from "../services/stt/DeepgramService.js";
 import { CartesiaSttService } from "../services/stt/CartesiaSttService.js";
 import { OpenAIService } from "../services/llm/OpenAIService.js";
 import { GroqService } from "../services/llm/GroqService.js";
+import { GeminiService } from "../services/llm/GeminiService.js";
 import { ElevenLabsService } from "../services/tts/ElevenLabsService.js";
 import { CartesiaTtsService } from "../services/tts/CartesiaTtsService.js";
 import { SarvamTtsService } from "../services/tts/SarvamTtsService.js";
@@ -29,6 +30,7 @@ const deepgramService = new DeepgramService();
 const cartesiaSttService = new CartesiaSttService();
 const openaiService = new OpenAIService();
 const groqService = new GroqService();
+const geminiLlmService = new GeminiService();
 const elevenLabsService = new ElevenLabsService();
 const cartesiaTtsService = new CartesiaTtsService();
 const sarvamTtsService = new SarvamTtsService();
@@ -105,15 +107,20 @@ interface AgentConfig {
 
 // Resolved API credentials for a call session — loaded from DB or env fallback
 interface ResolvedCredentials {
-  llm: ResolvedCredential;      // either OpenAI or Groq based on agent.llmProvider
-  llmProvider: "openai" | "groq";
+  llm: ResolvedCredential;      // OpenAI, Groq, or Gemini based on agent.llmProvider
+  llmProvider: "openai" | "groq" | "gemini";
   stt: ResolvedCredential;
   tts: ResolvedCredential;
   gemini: ResolvedCredential;
 }
 
 async function resolveCredentialsForAgent(agent: AgentConfig): Promise<ResolvedCredentials> {
-  const llmProvider: "openai" | "groq" = agent.llmProvider === "groq" ? "groq" : "openai";
+  const llmProvider: "openai" | "groq" | "gemini" =
+    agent.llmProvider === "groq"
+      ? "groq"
+      : agent.llmProvider === "gemini"
+        ? "gemini"
+        : "openai";
   const [llm, stt, tts, gemini] = await Promise.all([
     resolveLlmCredential(agent.organizationId, llmProvider, agent.llmCredentialId),
     resolveSttCredential(agent.organizationId, agent.sttProvider, agent.sttCredentialId),
@@ -814,7 +821,12 @@ async function handleCallSession(ws: WebSocket, callId: string): Promise<void> {
         });
       };
 
-      const llmService = creds.llmProvider === "groq" ? groqService : openaiService;
+      const llmService =
+        creds.llmProvider === "groq"
+          ? groqService
+          : creds.llmProvider === "gemini"
+            ? geminiLlmService
+            : openaiService;
       const fullReply = await llmService.streamNextTurn(
         agent.systemPrompt,
         llmHistory,

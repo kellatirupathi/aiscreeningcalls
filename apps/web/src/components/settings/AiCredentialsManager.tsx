@@ -19,7 +19,7 @@ const PROVIDERS: { id: AiProvider; label: string; description: string }[] = [
   { id: "cartesia", label: "Cartesia", description: "STT (ink-whisper) + TTS (sonic-2)" },
   { id: "elevenlabs", label: "ElevenLabs", description: "TTS with premium voices" },
   { id: "deepgram", label: "Deepgram", description: "STT (nova-3, nova-2)" },
-  { id: "gemini", label: "Gemini", description: "Speech-to-speech end-to-end model" },
+  { id: "gemini", label: "Google Gemini", description: "LLM (Gemini 3.1 Flash Lite, 3.1 Pro, 2.5 Flash, etc.) + native speech-to-speech engine" },
   { id: "sarvam", label: "Sarvam", description: "TTS optimized for Indian languages (bulbul:v2, bulbul:v3)" }
 ];
 

@@ -12,10 +12,11 @@ interface LLMTabViewProps {
 }
 
 // Option values match backend titleCase output (readProvider lowercases on save,
-// mapAgent→titleCase returns "Openai"/"Groq" on load).
+// mapAgent→titleCase returns "Openai"/"Groq"/"Gemini" on load).
 const LLM_PROVIDERS: { value: string; label: string }[] = [
   { value: "Openai", label: "OpenAI" },
-  { value: "Groq", label: "Groq" }
+  { value: "Groq", label: "Groq" },
+  { value: "Gemini", label: "Google Gemini" }
 ];
 
 const MODELS_BY_PROVIDER: Record<string, string[]> = {
@@ -27,11 +28,25 @@ const MODELS_BY_PROVIDER: Record<string, string[]> = {
     "openai/gpt-oss-20b",
     "mixtral-8x7b-32768",
     "gemma2-9b-it"
+  ],
+  gemini: [
+    // Only REAL Gemini models verified to exist in Google's catalogue.
+    // Non-existent IDs return HTTP 400 and break every agent call.
+    "gemini-2.5-flash-lite",
+    "gemini-2.5-flash",
+    "gemini-2.5-pro",
+    "gemini-2.0-flash-lite",
+    "gemini-2.0-flash",
+    "gemini-1.5-flash",
+    "gemini-1.5-pro"
   ]
 };
 
 function providerKey(llmProvider: string): AiProvider {
-  return llmProvider.toLowerCase() === "groq" ? "groq" : "openai";
+  const lower = llmProvider.toLowerCase();
+  if (lower === "groq") return "groq";
+  if (lower === "gemini") return "gemini";
+  return "openai";
 }
 
 export default function LLMTabView({ agent, onAgentChange }: LLMTabViewProps) {

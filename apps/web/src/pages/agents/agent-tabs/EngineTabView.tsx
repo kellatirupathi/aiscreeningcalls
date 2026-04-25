@@ -1,10 +1,11 @@
+import { useEffect } from "react";
 import { Input } from "@/components/ui/Input";
 import { Select } from "@/components/ui/Select";
 import { Slider } from "@/components/ui/Slider";
 import { Toggle } from "@/components/ui/Toggle";
 import { Textarea } from "@/components/ui/Textarea";
 import { SectionCard } from "@/components/agent-builder/SectionCard";
-import { useAiCredentials } from "@/hooks/useAiCredentials";
+import { useAiCredentials, useGeminiLiveCatalog } from "@/hooks/useAiCredentials";
 import type { AgentRecord } from "@/types";
 
 interface EngineTabViewProps {
@@ -14,25 +15,52 @@ interface EngineTabViewProps {
 
 const responseRates = ["Rapid", "Balanced", "Smooth"];
 
-const geminiModels = [
-  "gemini-2.5-flash-native-audio-latest",
-  "gemini-3.1-flash-live-preview"
-];
-
-const geminiVoices = [
-  "Kore", "Charon", "Fenrir", "Aoede", "Puck", "Leda", "Orus", "Zephyr"
-];
+// Minimal fallback used ONLY when no credential is selected yet so the
+// dropdowns aren't empty. The real list is fetched from the backend catalog
+// endpoint using the selected credential's API key.
+const GEMINI_MODELS_FALLBACK = ["gemini-2.5-flash-preview-native-audio-dialog"];
+const GEMINI_VOICES_FALLBACK = ["Kore", "Puck", "Charon", "Leda", "Orus"];
 
 export default function EngineTabView({ agent, onAgentChange }: EngineTabViewProps) {
   const isGemini = agent.conversationEngine === "gemini-live";
   const { data: geminiCredentials = [] } = useAiCredentials("gemini");
 
-  // If the stored model isn't in the list (e.g. renamed), auto-correct to the first valid one
-  const effectiveGeminiModel = geminiModels.includes(agent.geminiModel) ? agent.geminiModel : geminiModels[0];
-  if (isGemini && effectiveGeminiModel !== agent.geminiModel) {
-    // Schedule a state update for next tick so we don't mutate during render
-    setTimeout(() => onAgentChange({ geminiModel: effectiveGeminiModel }), 0);
-  }
+  // Pick which credential the catalog fetch uses: the agent's explicitly
+  // selected credential, or fall back to the org's default Gemini credential
+  // so we can still populate options before the user picks one.
+  const defaultGeminiCred = geminiCredentials.find((c) => c.isDefault) ?? geminiCredentials[0];
+  const catalogCredentialId = agent.geminiCredentialId || defaultGeminiCred?.id || null;
+
+  const {
+    data: catalog,
+    isLoading: catalogLoading,
+    isError: catalogError
+  } = useGeminiLiveCatalog(isGemini ? catalogCredentialId : null);
+
+  const dynamicModels = catalog?.models && catalog.models.length > 0
+    ? catalog.models
+    : GEMINI_MODELS_FALLBACK;
+
+  // Voices depend on the selected model (2.0 Live has 8, 2.5 native audio has 30+).
+  const dynamicVoices = catalog?.voicesByModel?.[agent.geminiModel]
+    ?? catalog?.voicesByModel?.[dynamicModels[0]]
+    ?? GEMINI_VOICES_FALLBACK;
+
+  // Auto-correct the stored model if it's no longer in the fetched list.
+  useEffect(() => {
+    if (!isGemini) return;
+    if (!dynamicModels.includes(agent.geminiModel)) {
+      onAgentChange({ geminiModel: dynamicModels[0] });
+    }
+  }, [isGemini, dynamicModels, agent.geminiModel, onAgentChange]);
+
+  // Auto-correct the stored voice if it's not valid for the current model.
+  useEffect(() => {
+    if (!isGemini) return;
+    if (!dynamicVoices.includes(agent.geminiVoice)) {
+      onAgentChange({ geminiVoice: dynamicVoices[0] });
+    }
+  }, [isGemini, dynamicVoices, agent.geminiVoice, onAgentChange]);
 
   return (
     <div className="tab-stack">
@@ -57,28 +85,46 @@ export default function EngineTabView({ agent, onAgentChange }: EngineTabViewPro
           <>
             <div className="form-grid form-grid--2" style={{ marginTop: 12 }}>
               <label className="field">
-                <span>Model</span>
+                <span>
+                  Model
+                  {catalogLoading && <small style={{ color: "#94a3b8", marginLeft: 6 }}>(loading…)</small>}
+                </span>
                 <Select
-                  value={effectiveGeminiModel}
+                  value={agent.geminiModel}
                   onChange={(event) => onAgentChange({ geminiModel: event.target.value })}
+                  disabled={catalogLoading || !catalogCredentialId}
                 >
-                  {geminiModels.map((model) => (
+                  {dynamicModels.map((model) => (
                     <option key={model} value={model}>{model}</option>
                   ))}
                 </Select>
               </label>
               <label className="field">
-                <span>Voice</span>
+                <span>
+                  Voice
+                  {catalogLoading && <small style={{ color: "#94a3b8", marginLeft: 6 }}>(loading…)</small>}
+                </span>
                 <Select
                   value={agent.geminiVoice}
                   onChange={(event) => onAgentChange({ geminiVoice: event.target.value })}
+                  disabled={catalogLoading || !catalogCredentialId}
                 >
-                  {geminiVoices.map((voice) => (
+                  {dynamicVoices.map((voice) => (
                     <option key={voice} value={voice}>{voice}</option>
                   ))}
                 </Select>
               </label>
             </div>
+            {catalogError && catalogCredentialId && (
+              <small style={{ color: "#b45309", display: "block", marginTop: 6 }}>
+                Couldn't fetch live catalog from Google — showing fallback list. Check that the API key is valid.
+              </small>
+            )}
+            {catalog?.source === "fallback" && (
+              <small style={{ color: "#b45309", display: "block", marginTop: 6 }}>
+                Using fallback model list (Google API didn't respond).
+              </small>
+            )}
             <label className="field" style={{ marginTop: 12 }}>
               <span>API Credential</span>
               <Select

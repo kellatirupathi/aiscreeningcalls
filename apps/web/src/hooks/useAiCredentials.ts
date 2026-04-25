@@ -55,6 +55,32 @@ export function useAiCredentials(provider?: AiProvider) {
   });
 }
 
+export interface GeminiLiveCatalog {
+  source: "google" | "fallback";
+  models: string[];
+  voicesByModel: Record<string, string[]>;
+}
+
+/**
+ * Fetches the list of Gemini Live models + voices using the given
+ * credential's API key. Models come from Google's live models.list; voices
+ * come from the backend (Google doesn't expose a voice API). Cached for
+ * 5 minutes to avoid re-hitting Google every time the user opens the tab.
+ */
+export function useGeminiLiveCatalog(credentialId: string | null | undefined) {
+  return useQuery({
+    queryKey: ["gemini-live-catalog", credentialId ?? ""],
+    enabled: !!credentialId,
+    staleTime: 5 * 60 * 1000,
+    queryFn: async () => {
+      const response = await api.get<GeminiLiveCatalog>(
+        `/ai-credentials/${credentialId}/gemini-live-catalog`
+      );
+      return response.data;
+    }
+  });
+}
+
 export function useCreateAiCredential() {
   const queryClient = useQueryClient();
   return useMutation({
